@@ -1,0 +1,9 @@
+{
+    "makefile.launchConfigurations": [
+        {
+            "cwd": "/home/akash/projects/csolace",
+            "binaryPath": "/home/akash/projects/csolace/solace",
+            "binaryArgs": []
+        }
+    ]
+}

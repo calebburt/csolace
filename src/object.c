@@ -1,3 +1,4 @@
+#include "common.h"
 #include "object.h"
 
 MAKE_DYNAMIC_ARRAY(Object, ObjectArray)
