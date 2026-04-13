@@ -4,3 +4,8 @@ solace: src/*.c src/*.h
 .PHONY = run
 run: solace
 	./solace
+
+.PHONY = debug
+debug: src/*.c src/*.h
+	gcc -o solace_dbg src/*.c -Wall -Wextra -pedantic -DSLC_DEBUG -g -O0
+	./solace_dbg

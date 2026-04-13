@@ -8,6 +8,7 @@ void debug(const char* format, ...) {
 
     va_start(args, format);
 
+    printf(" ");
     vprintf(format, args);
 
     va_end(args);

@@ -2,6 +2,7 @@
 #include "chunk.h"
 #include "object.h"
 #include "vm.h"
+#include "compiler.h"
 #include "debug.h"
 
 static void resetStack(VM *vm) {
@@ -40,13 +41,13 @@ static InterpretResult run(VM *vm) {
 
     while (true) {
 #ifdef SLC_DEBUG
-        printf("Stack: [ ");
+        printf("      [ ");
         for (Object *slot = vm->stack; slot < vm->stackTop; slot++) {
             printf("[");
             printObject(*slot);
             printf("]");
         }
-        printf(" ]\n");
+        printf(" ]\n ");
 
         disassembleInstruction(vm->chunk, (int)(vm->ip - vm->chunk->code.data));
 #endif
@@ -76,8 +77,7 @@ static InterpretResult run(VM *vm) {
 #undef BINARY_OP
 }
 
-InterpretResult interpret(VM *vm, Chunk *chunk) {
-    vm->chunk = chunk;
-    vm->ip = vm->chunk->code.data;
-    return run(vm);
+InterpretResult interpret(VM *vm, const char *source) {
+    compile(source);
+    return INTERPRET_OK;
 }
