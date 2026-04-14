@@ -41,7 +41,7 @@ static InterpretResult run(VM *vm) {
 
     while (true) {
 #ifdef SLC_DEBUG
-        printf("      [ ");
+        printf(" [ ");
         for (Object *slot = vm->stack; slot < vm->stackTop; slot++) {
             printf("[");
             printObject(*slot);
@@ -78,6 +78,19 @@ static InterpretResult run(VM *vm) {
 }
 
 InterpretResult interpret(VM *vm, const char *source) {
-    compile(source);
-    return INTERPRET_OK;
+    Chunk chunk;
+    initChunk(&chunk);
+
+    if (!compile(source, &chunk)) {
+        freeChunk(&chunk);
+        return INTERPRET_COMPILE_ERROR;
+    }
+
+    vm->chunk = &chunk;
+    vm->ip = vm->chunk->code.data;
+
+    InterpretResult result = run(vm);
+    
+    freeChunk(&chunk);
+    return result;
 }

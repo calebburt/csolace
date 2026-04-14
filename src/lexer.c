@@ -194,7 +194,7 @@ Token scanToken(Lexer *lexer) {
             return string(lexer);
     }
 
-    char buf[26];
-    sprintf(buf, "Unexpected character '%c'.", c);
+    static char buf[32];
+    snprintf(buf, sizeof(buf), "Unexpected character '%c'.", c);
     return errorToken(lexer, buf);
 }
