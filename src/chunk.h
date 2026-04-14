@@ -3,7 +3,7 @@
 
 #include "common.h"
 #include "dynamic_array.h"
-#include "object.h"
+#include "value.h"
 
 typedef enum {
     OP_CONSTANT,
@@ -26,14 +26,14 @@ MAKE_DYNAMIC_ARRAY_H(LineInfo, LineInfoArray)
 
 typedef struct {
     Code code;
-    ObjectArray constants;
+    ValueArray constants;
     LineInfoArray lines;
 } Chunk; 
 
 void initChunk(Chunk *chunk);
 void freeChunk(Chunk *chunk);
 void writeChunk(Chunk *chunk, uint8_t byte, int line);
-int addConstant(Chunk *chunk, Object object);
+int addConstant(Chunk *chunk, Value value);
 
 LineInfo getLine(Chunk *chunk, int offset);
 

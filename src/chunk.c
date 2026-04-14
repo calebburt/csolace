@@ -7,13 +7,13 @@ MAKE_DYNAMIC_ARRAY(LineInfo, LineInfoArray)
 void initChunk(Chunk *chunk) {
     initCode(&chunk->code);
     initLineInfoArray(&chunk->lines);
-    initObjectArray(&chunk->constants);
+    initValueArray(&chunk->constants);
 }
 
 void freeChunk(Chunk *chunk) {
     freeCode(&chunk->code);
     freeLineInfoArray(&chunk->lines);
-    freeObjectArray(&chunk->constants);
+    freeValueArray(&chunk->constants);
 }
 
 void writeChunk(Chunk *chunk, uint8_t byte, int line) {
@@ -25,8 +25,8 @@ void writeChunk(Chunk *chunk, uint8_t byte, int line) {
     }
 }
 
-int addConstant(Chunk *chunk, Object object) {
-    appendObjectArray(&chunk->constants, object);
+int addConstant(Chunk *chunk, Value value) {
+    appendValueArray(&chunk->constants, value);
     return chunk->constants.count - 1;
 }
 

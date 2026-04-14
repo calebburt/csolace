@@ -1,12 +1,27 @@
 #include "common.h"
 #include "chunk.h"
-#include "object.h"
+#include "value.h"
 #include "vm.h"
 #include "compiler.h"
 #include "debug.h"
+#include <stdarg.h>
 
 static void resetStack(VM *vm) {
     vm->stackTop = vm->stack;
+}
+
+static void runtimeError(VM *vm, const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    fprintf(stderr, "\033[31mSyntaxError: ");
+    vfprintf(stderr, format, args);
+    fprintf(stderr, "\033[0m\n");
+    va_end(args);
+
+    size_t instruction = vm->ip - vm->chunk->code.data - 1;
+    int line = getLine(vm->chunk, (int)instruction).line;
+    fprintf(stderr, "\033[33m at line %d\033[0m\n", line);
+    resetStack(vm);
 }
 
 void initVM(VM *vm) {
@@ -18,33 +33,41 @@ void freeVM(VM *vm) {
     
 }
 
-void push(VM *vm, Object object) {
-    *vm->stackTop = object;
+void push(VM *vm, Value value) {
+    *vm->stackTop = value;
     vm->stackTop++;
 }
 
-Object pop(VM *vm) {
+Value pop(VM *vm) {
     vm->stackTop--;
     return *vm->stackTop;
+}
+
+static Value peek(VM *vm, int distance) {
+    return vm->stackTop[-1 - distance];
 }
 
 static InterpretResult run(VM *vm) {
 #define READ_BYTE() (*vm->ip++)
 #define READ_CONSTANT() (vm->chunk->constants.data[READ_BYTE()])
 
-#define BINARY_OP(op) \
+#define BINARY_OP(vm, valueType, op) \
     do { \
-        double b = pop(vm); \
-        double a = pop(vm); \
-        push(vm, a op b); \
+      if (!IS_NUMBER(peek(vm, 0)) || !IS_NUMBER(peek(vm, 1))) { \
+        runtimeError(vm, "Operands must be numbers."); \
+        return INTERPRET_RUNTIME_ERROR; \
+      } \
+      double b = AS_NUMBER(pop(vm)); \
+      double a = AS_NUMBER(pop(vm)); \
+      push(vm, valueType(a op b)); \
     } while (false)
 
     while (true) {
 #ifdef SLC_DEBUG
         printf(" [ ");
-        for (Object *slot = vm->stack; slot < vm->stackTop; slot++) {
+        for (Value *slot = vm->stack; slot < vm->stackTop; slot++) {
             printf("[");
-            printObject(*slot);
+            printValue(*slot);
             printf("]");
         }
         printf(" ]\n ");
@@ -54,17 +77,24 @@ static InterpretResult run(VM *vm) {
         uint8_t instruction;
         switch (instruction = READ_BYTE()) {
             case OP_CONSTANT: {
-                Object constant = READ_CONSTANT();
+                Value constant = READ_CONSTANT();
                 push(vm, constant);
                 break;
             }
-            case OP_ADD: BINARY_OP(+); break;
-            case OP_SUBTRACT: BINARY_OP(-); break;
-            case OP_MULTIPLY: BINARY_OP(*); break;
-            case OP_DIVIDE: BINARY_OP(/); break;
-            case OP_NEGATE: push(vm, -pop(vm)); break;
+            case OP_ADD: BINARY_OP(vm, NUMBER_VAL, +); break;
+            case OP_SUBTRACT: BINARY_OP(vm, NUMBER_VAL, -); break;
+            case OP_MULTIPLY: BINARY_OP(vm, NUMBER_VAL, *); break;
+            case OP_DIVIDE: BINARY_OP(vm, NUMBER_VAL, /); break;
+            case OP_NEGATE: {
+                if (!IS_NUMBER(peek(vm, 0))) {
+                    runtimeError(vm, "Operand must be a number.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                push(vm, NUMBER_VAL(-AS_NUMBER(pop(vm))));
+                break;
+            }
             case OP_RETURN: {
-                printObject(pop(vm));
+                printValue(pop(vm));
                 printf("\n");
                 return INTERPRET_OK;
             }

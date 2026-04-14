@@ -1,6 +1,6 @@
 #include "common.h"
 #include "debug.h"
-#include "object.h"
+#include "value.h"
 
 void debug(const char* format, ...) {
     #ifdef SLC_DEBUG
@@ -30,7 +30,7 @@ static int simpleInstruction(const char *name, int offset) {
 static int constantInstruction(const char *name, Chunk *chunk, int offset) {
     uint8_t constant = chunk->code.data[offset+1];
     printf("%-16s %4d '", name, constant);
-    printObject(chunk->constants.data[constant]);
+    printValue(chunk->constants.data[constant]);
     printf("'\n");
     return offset + 2;
 }

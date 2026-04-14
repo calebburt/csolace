@@ -3,15 +3,15 @@
 
 #include "common.h"
 #include "chunk.h"
-#include "object.h"
+#include "value.h"
 
 #define STACK_MAX 256
 
 typedef struct {
     Chunk *chunk;
     uint8_t *ip;
-    Object stack[STACK_MAX]; // will replace with dynamic array
-    Object *stackTop;
+    Value stack[STACK_MAX]; // will replace with dynamic array
+    Value *stackTop;
 } VM;
 
 typedef enum {
@@ -25,7 +25,7 @@ void freeVM(VM *vm);
 
 InterpretResult interpret(VM *vm, const char *source);
 
-void push(VM *vm, Object object);
-Object pop(VM *vm);
+void push(VM *vm, Value value);
+Value pop(VM *vm);
 
 #endif

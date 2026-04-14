@@ -99,8 +99,8 @@ static void emitBytes(Parser *parser, uint8_t byte1, uint8_t byte2) {
     emitByte(parser, byte2);
 }
 
-static uint8_t makeConstant(Parser *parser, Object object) {
-    int constant = addConstant(currentChunk(parser), object);
+static uint8_t makeConstant(Parser *parser, Value value) {
+    int constant = addConstant(currentChunk(parser), value);
     if (constant > UINT8_MAX) {
         error(parser, "Too many constants in one chunk.");
         return 0;
@@ -109,8 +109,8 @@ static uint8_t makeConstant(Parser *parser, Object object) {
     return (uint8_t)constant;
 }
 
-static void emitConstant(Parser *parser, Object object) {
-    emitBytes(parser, OP_CONSTANT, makeConstant(parser, object));
+static void emitConstant(Parser *parser, Value value) {
+    emitBytes(parser, OP_CONSTANT, makeConstant(parser, value));
 }
 
 
@@ -145,7 +145,7 @@ static void grouping(Parser *parser) {
 
 static void number(Parser *parser) {
     double value = strtod(parser->previous.start, NULL);
-    emitConstant(parser, value);
+    emitConstant(parser, NUMBER_VAL(value));
 }
 
 static void unary(Parser *parser) {
