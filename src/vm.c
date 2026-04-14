@@ -47,6 +47,10 @@ static Value peek(VM *vm, int distance) {
     return vm->stackTop[-1 - distance];
 }
 
+static bool isFalsey(Value value) {
+    return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+}
+
 static InterpretResult run(VM *vm) {
 #define READ_BYTE() (*vm->ip++)
 #define READ_CONSTANT() (vm->chunk->constants.data[READ_BYTE()])
@@ -81,10 +85,24 @@ static InterpretResult run(VM *vm) {
                 push(vm, constant);
                 break;
             }
+            case OP_NIL: push(vm, NIL_VAL); break;
+            case OP_TRUE: push(vm, BOOL_VAL(true)); break;
+            case OP_FALSE: push(vm, BOOL_VAL(false)); break;
+            case OP_EQUAL: {
+                Value b = pop(vm);
+                Value a = pop(vm);
+                push(vm, BOOL_VAL(valuesEqual(a, b)));
+                break;
+            }
+            case OP_GREATER: BINARY_OP(vm, BOOL_VAL, >); break;
+            case OP_LESS: BINARY_OP(vm, BOOL_VAL, <); break;
+            case OP_GREATER_EQUAL: BINARY_OP(vm, BOOL_VAL, >=); break;
+            case OP_LESS_EQUAL: BINARY_OP(vm, BOOL_VAL, <=); break;
             case OP_ADD: BINARY_OP(vm, NUMBER_VAL, +); break;
             case OP_SUBTRACT: BINARY_OP(vm, NUMBER_VAL, -); break;
             case OP_MULTIPLY: BINARY_OP(vm, NUMBER_VAL, *); break;
             case OP_DIVIDE: BINARY_OP(vm, NUMBER_VAL, /); break;
+            case OP_NOT: push(vm, BOOL_VAL(isFalsey(pop(vm)))); break;
             case OP_NEGATE: {
                 if (!IS_NUMBER(peek(vm, 0))) {
                     runtimeError(vm, "Operand must be a number.");

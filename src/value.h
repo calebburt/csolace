@@ -34,4 +34,6 @@ MAKE_DYNAMIC_ARRAY_H(Value, ValueArray)
 
 void printValue(Value value);
 
+bool valuesEqual(Value a, Value b);
+
 #endif

@@ -91,7 +91,14 @@ static TokenType identifierType(Lexer *lexer) {
             }
             break;
         case 'i': return checkKeyword(lexer, 1, 1, "f", TOKEN_IF);
-        case 'n': return checkKeyword(lexer, 1, 2, "il", TOKEN_NIL);
+        case 'n':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'i': return checkKeyword(lexer, 2, 1, "l", TOKEN_NIL);
+                    case 'o': return checkKeyword(lexer, 2, 1, "t", TOKEN_NOT);
+                }
+            }
+            break;
         case 'o': return checkKeyword(lexer, 1, 1, "r", TOKEN_OR);
         case 'p': return checkKeyword(lexer, 1, 4, "rint", TOKEN_PRINT);
         case 'r': return checkKeyword(lexer, 1, 5, "eturn", TOKEN_RETURN);
