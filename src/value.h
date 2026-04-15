@@ -70,6 +70,9 @@ bool valuesEqual(Value a, Value b);
 ObjString *copyString(struct VM *vm, const char *chars, int length);
 ObjString *allocateString(struct VM *vm, char *chars, int length);
 
+void freeObject(Obj *object);
+void freeObjects(Obj *objects);
+
 static inline bool isObjType(Value value, ObjType type) {
     return IS_OBJ(value) && AS_OBJ(value)->type == type;
 }
