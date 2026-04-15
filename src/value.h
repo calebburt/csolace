@@ -11,6 +11,7 @@ typedef enum {
 
 typedef struct Obj { // fix forward declaration
     ObjType type;
+    uint32_t hash;
     struct Obj *next;
 } Obj;
 
@@ -64,8 +65,8 @@ static inline bool isObjType(Value value, ObjType type);
 MAKE_DYNAMIC_ARRAY_H(Value, ValueArray)
 
 void printValue(Value value);
-
 bool valuesEqual(Value a, Value b);
+uint32_t hashValue(Value value);
 
 ObjString *copyString(struct VM *vm, const char *chars, int length);
 ObjString *allocateString(struct VM *vm, char *chars, int length);

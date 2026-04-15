@@ -7,7 +7,7 @@ run: solace
 
 .PHONY = debug
 debug: src/*.c src/*.h
-	gcc -o solace_dbg src/*.c -Wall -Wextra -pedantic -DSLC_DEBUG -g -O0
+	gcc -o solace_dbg src/*.c -Wall -Wextra -pedantic -DSLC_DEBUG -g -O0 -pg
 	./solace_dbg
 
 .PHONY = clean

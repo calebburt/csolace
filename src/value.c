@@ -37,12 +37,45 @@ bool valuesEqual(Value a, Value b) {
     }
 }
 
+uint32_t hashString(ObjString *string) {
+    uint32_t hash = 2166136261u;
+    for (int i = 0; i < string->length; i++) {
+        hash ^= (uint8_t)string->chars[i];
+        hash *= 16777619;
+    }
+    return hash;
+}
+
+uint32_t hashValue(Value value) {
+    switch (value.type) {
+        case VAL_BOOL: return (uint32_t)value.as.boolean;
+        case VAL_NIL: return (uint32_t)3;
+        case VAL_NUMBER: {
+            double num = AS_NUMBER(value);
+            uint64_t bits;
+            memcpy(&bits, &num, sizeof(bits));
+            return (uint32_t)(bits ^ (bits >> 32));
+        }
+        case VAL_OBJ: {
+            if (AS_OBJ(value)->hash != 0) return AS_OBJ(value)->hash;
+            switch(OBJ_TYPE(value)) {
+                case OBJ_STRING:
+                    return hashString(AS_STRING(value));
+                default: return 0;
+            }
+        }
+        default: return 0;
+    }
+}
+
 #define ALLOCATE_OBJ(vm, type, objectType) (type*)allocateObject(vm, sizeof(type), objectType)
 
 static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     Obj *object = (Obj*)reallocate(NULL, 0, size);
     object->type = type;
     object->next = vm->objects;
+    object->hash = 0;
+    object->hash = hashValue(OBJ_VAL(object));
     vm->objects = object;
     return object;
 }
