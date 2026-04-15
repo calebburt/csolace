@@ -7,11 +7,12 @@
 
 #define STACK_MAX 256
 
-typedef struct {
+typedef struct VM {
     Chunk *chunk;
     uint8_t *ip;
-    Value stack[STACK_MAX]; // will replace with dynamic array
+    Value stack[STACK_MAX]; // will replace with dynamic array maybe
     Value *stackTop;
+    Obj *objects;
 } VM;
 
 typedef enum {

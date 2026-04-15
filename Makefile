@@ -9,3 +9,7 @@ run: solace
 debug: src/*.c src/*.h
 	gcc -o solace_dbg src/*.c -Wall -Wextra -pedantic -DSLC_DEBUG -g -O0
 	./solace_dbg
+
+.PHONY = clean
+clean:
+	rm -f solace solace_dbg

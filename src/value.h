@@ -3,12 +3,15 @@
 
 #include "dynamic_array.h"
 
+struct VM;
+
 typedef enum {
     OBJ_STRING,
 } ObjType;
 
-typedef struct {
+typedef struct Obj { // fix forward declaration
     ObjType type;
+    struct Obj *next;
 } Obj;
 
 typedef struct {
@@ -64,8 +67,8 @@ void printValue(Value value);
 
 bool valuesEqual(Value a, Value b);
 
-ObjString *copyString(const char *chars, int length);
-ObjString *allocateString(char *chars, int length);
+ObjString *copyString(struct VM *vm, const char *chars, int length);
+ObjString *allocateString(struct VM *vm, char *chars, int length);
 
 static inline bool isObjType(Value value, ObjType type) {
     return IS_OBJ(value) && AS_OBJ(value)->type == type;

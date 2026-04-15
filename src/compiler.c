@@ -10,6 +10,7 @@ typedef struct {
     Token previous;
     Lexer *lexer;
     Chunk *compilingChunk;
+    VM *vm;
     bool hadError;
     bool panicMode;
 } Parser;
@@ -164,7 +165,7 @@ static void number(Parser *parser) {
 }
 
 static void string(Parser *parser) {
-    emitConstant(parser, OBJ_VAL(copyString(parser->previous.start + 1, parser->previous.length - 2)));
+    emitConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start + 1, parser->previous.length - 2)));
 }
 
 static void unary(Parser *parser) {
@@ -248,7 +249,7 @@ static void expression(Parser *parser) {
 }
 
 
-bool compile(const char *source, Chunk *chunk) {
+bool compile(VM *vm, const char *source, Chunk *chunk) {
     Lexer lexer;
     initLexer(&lexer, source);
     Parser parser;
@@ -256,6 +257,7 @@ bool compile(const char *source, Chunk *chunk) {
     parser.hadError = false;
     parser.panicMode = false;
     parser.compilingChunk = chunk;
+    parser.vm = vm;
     
     advance(&parser);
     expression(&parser);

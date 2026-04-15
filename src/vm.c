@@ -26,11 +26,12 @@ static void runtimeError(VM *vm, const char *format, ...) {
 
 void initVM(VM *vm) {
     vm->chunk = NULL;
+    vm->objects = NULL;
     resetStack(vm);
 }
 
 void freeVM(VM *vm) {
-    
+    freeObjects(vm->objects);
 }
 
 void push(VM *vm, Value value) {
@@ -107,7 +108,7 @@ static InterpretResult run(VM *vm) {
                     memcpy(chars, a->chars, a->length);
                     memcpy(chars + a->length, b->chars, b->length);
                     chars[length] = '\0';
-                    push(vm, OBJ_VAL(allocateString(chars, length)));
+                    push(vm, OBJ_VAL(allocateString(vm, chars, length)));
                 } else if (IS_NUMBER(peek(vm, 0)) && IS_NUMBER(peek(vm, 1))) {
                     double b = AS_NUMBER(pop(vm));
                     double a = AS_NUMBER(pop(vm));
@@ -148,7 +149,7 @@ InterpretResult interpret(VM *vm, const char *source) {
     Chunk chunk;
     initChunk(&chunk);
 
-    if (!compile(source, &chunk)) {
+    if (!compile(vm, source, &chunk)) {
         freeChunk(&chunk);
         return INTERPRET_COMPILE_ERROR;
     }
