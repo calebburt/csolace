@@ -13,7 +13,7 @@ static void resetStack(VM *vm) {
 static void runtimeError(VM *vm, const char *format, ...) {
     va_list args;
     va_start(args, format);
-    fprintf(stderr, "\033[31mSyntaxError: ");
+    fprintf(stderr, "\033[31mRuntimeError: ");
     vfprintf(stderr, format, args);
     fprintf(stderr, "\033[0m\n");
     va_end(args);
@@ -132,9 +132,13 @@ static InterpretResult run(VM *vm) {
                 break;
             }
             case OP_RETURN: {
+                return INTERPRET_OK;
+            }
+
+            case OP_PRINT: { //temp
                 printValue(pop(vm));
                 printf("\n");
-                return INTERPRET_OK;
+                break;
             }
         }
     }

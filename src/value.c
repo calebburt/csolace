@@ -75,7 +75,6 @@ static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     object->type = type;
     object->next = vm->objects;
     object->hash = 0;
-    object->hash = hashValue(OBJ_VAL(object));
     vm->objects = object;
     return object;
 }
@@ -84,6 +83,7 @@ ObjString *allocateString(VM *vm, char *chars, int length) {
     ObjString *string = ALLOCATE_OBJ(vm, ObjString, OBJ_STRING);
     string->length = length;
     string->chars = chars;
+    string->obj.hash = hashValue(OBJ_VAL(string));
     return string;
 }
 

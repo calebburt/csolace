@@ -90,6 +90,16 @@ static void consume(Parser *parser, TokenType type, const char *message) {
     errorAtCurrent(parser, message);
 }
 
+static bool check(Parser *parser, TokenType type) {
+    return parser->current.type == type;
+}
+
+static bool match(Parser *parser, TokenType type) {
+    if (!check(parser, type)) return false;
+    advance(parser);
+    return true;
+}
+
 
 static void emitByte(Parser *parser, uint8_t byte) {
     writeChunk(currentChunk(parser), byte, parser->previous.line);
@@ -194,10 +204,10 @@ ParseRule rules[] = {
     [TOKEN_BANG_EQUAL]    = {NULL,     binary, PREC_EQUALITY},
     [TOKEN_EQUAL]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_EQUAL_EQUAL]   = {NULL,     binary, PREC_EQUALITY},
-    [TOKEN_GREATER]       = {NULL,     binary, PREC_EQUALITY},
-    [TOKEN_GREATER_EQUAL] = {NULL,     binary, PREC_EQUALITY},
-    [TOKEN_LESS]          = {NULL,     binary, PREC_EQUALITY},
-    [TOKEN_LESS_EQUAL]    = {NULL,     binary, PREC_EQUALITY},
+    [TOKEN_GREATER]       = {NULL,     binary, PREC_COMPARISON},
+    [TOKEN_GREATER_EQUAL] = {NULL,     binary, PREC_COMPARISON},
+    [TOKEN_LESS]          = {NULL,     binary, PREC_COMPARISON},
+    [TOKEN_LESS_EQUAL]    = {NULL,     binary, PREC_COMPARISON},
     [TOKEN_IDENTIFIER]    = {NULL,     NULL,   PREC_NONE},
     [TOKEN_STRING]        = {string,   NULL,   PREC_NONE},
     [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
@@ -260,8 +270,11 @@ bool compile(VM *vm, const char *source, Chunk *chunk) {
     parser.vm = vm;
     
     advance(&parser);
-    expression(&parser);
-    consume(&parser, TOKEN_EOF, "Expect end of expression.");
+    
+    while (!match(&parser, TOKEN_EOF)) {
+        expression(&parser);
+        emitByte(&parser, OP_PRINT);
+    }
     
     endCompiler(&parser);
 

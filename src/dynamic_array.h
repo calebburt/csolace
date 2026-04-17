@@ -10,7 +10,7 @@
     (type*)reallocate(pointer, sizeof(type) * (oldCount), sizeof(type) * (newCount))
 
 #define FREE_ARRAY(type, pointer, oldCount) \
-    reallocate(pointer, sizeof(type) * oldCount, 0)
+    reallocate(pointer, sizeof(type) * (oldCount), 0)
 
 #define MAKE_DYNAMIC_ARRAY(type, name) \
     void init##name(name *array) { \

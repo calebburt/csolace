@@ -28,19 +28,24 @@ static void adjustCapacity(Table *table, int capacity) {
         entries[i].value.type = VAL_NIL;
     }
 
-    FREE_ARRAY(Entry, table->data, table->capacity);
+    Entry *oldEntries = table->data;
+    int oldCapacity = table->capacity;
+
     table->data = entries;
     table->capacity = capacity;
+    table->count = 0;
 
-    for (int i = 0; i < table->count; i++) {
-        Entry *entry = &table->data[i];
+    for (int i = 0; i < oldCapacity; i++) {
+        Entry *entry = &oldEntries[i];
         if (entry->key.type == VAL_NIL) continue;
 
-        Entry *dest = findEntry(table->data, table->capacity, entry->key);
+        Entry *dest = findEntry(entries, capacity, entry->key);
         dest->key = entry->key;
         dest->value = entry->value;
         table->count++;
     }
+
+    FREE_ARRAY(Entry, oldEntries, oldCapacity);
 }
 
 bool tableGet(Table *table, Value key, Value *value) {
@@ -75,7 +80,7 @@ bool tableDelete(Table *table, Value key) {
     if (entry->key.type == VAL_NIL) return false;
 
     entry->key.type = VAL_NIL;
-    entry->value.type = VAL_NIL;
+    entry->value = BOOL_VAL(true); // tombstone
     return true;
 }
 

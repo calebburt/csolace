@@ -1,3 +1,5 @@
+# ***Inspiration***
+
 # CRuby Object System Internals
 
 ## The Foundation: `VALUE`
