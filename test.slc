@@ -1,5 +1,8 @@
 # Test file (yay)
-1 + 1
-1 * 1
-5389 * 25789 / 38796279
-(3587 + 3278) - -2358
+hi: Number = 5
+hi + 1
+hi
+hi = hi + 42
+hi: String = "hello"
+hi: Number = 5389 * 25789 / 38796279
+hi = hi + "hi"

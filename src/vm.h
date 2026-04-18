@@ -4,6 +4,7 @@
 #include "common.h"
 #include "chunk.h"
 #include "value.h"
+#include "table.h"
 
 #define STACK_MAX 256
 
@@ -12,7 +13,9 @@ typedef struct VM {
     uint8_t *ip;
     Value stack[STACK_MAX]; // will replace with dynamic array maybe
     Value *stackTop;
+    Table globals;
     Obj *objects;
+    char *source;
 } VM;
 
 typedef enum {

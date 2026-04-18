@@ -10,6 +10,34 @@ static void resetStack(VM *vm) {
     vm->stackTop = vm->stack;
 }
 
+char* getLineOfString(const char* str, int lineNo) {
+    if (lineNo < 1) return NULL;
+
+    const char* start = str;
+    int currentLine = 1;
+    
+    // Skip to the start of the requested line
+    while (currentLine < lineNo && start != NULL) {
+        start = strchr(start, '\n');
+        if (start) start++; // Move past the newline
+        currentLine++;
+    }
+    
+    if (start == NULL || *start == '\0') return NULL;
+    
+    // Find the end of the line
+    const char* end = strchr(start, '\n');
+    size_t len = end ? (size_t)(end - start) : strlen(start);
+    
+    // Allocate memory and copy the line
+    char* result = (char*)malloc(len + 1);
+    if (result) {
+        strncpy(result, start, len);
+        result[len] = '\0';
+    }
+    return result;
+}
+
 static void runtimeError(VM *vm, const char *format, ...) {
     va_list args;
     va_start(args, format);
@@ -21,16 +49,19 @@ static void runtimeError(VM *vm, const char *format, ...) {
     size_t instruction = vm->ip - vm->chunk->code.data - 1;
     int line = getLine(vm->chunk, (int)instruction).line;
     fprintf(stderr, "\033[33m at line %d\033[0m\n", line);
+    fprintf(stderr, "%3.0d | %s \n", line, getLineOfString(vm->source, line));
     resetStack(vm);
 }
 
 void initVM(VM *vm) {
     vm->chunk = NULL;
     vm->objects = NULL;
+    initTable(&vm->globals);
     resetStack(vm);
 }
 
 void freeVM(VM *vm) {
+    freeTable(&vm->globals);
     freeObjects(vm->objects);
 }
 
@@ -55,6 +86,7 @@ static bool isFalsey(Value value) {
 static InterpretResult run(VM *vm) {
 #define READ_BYTE() (*vm->ip++)
 #define READ_CONSTANT() (vm->chunk->constants.data[READ_BYTE()])
+#define READ_STRING() AS_STRING(READ_CONSTANT())
 
 #define BINARY_OP(vm, valueType, op) \
     do { \
@@ -89,6 +121,22 @@ static InterpretResult run(VM *vm) {
             case OP_NIL: push(vm, NIL_VAL); break;
             case OP_TRUE: push(vm, BOOL_VAL(true)); break;
             case OP_FALSE: push(vm, BOOL_VAL(false)); break;
+            case OP_POP: pop(vm); break;
+            case OP_GET_GLOBAL: {
+                ObjString* name = READ_STRING();
+                Value value;
+                if (!tableGet(&vm->globals, OBJ_VAL(name), &value)) {
+                    runtimeError(vm, "Undefined variable '%s'.", name->chars);
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                push(vm, value);
+                break;
+            }
+            case OP_SET_GLOBAL: {
+                ObjString *name = READ_STRING();
+                tableSet(&vm->globals, OBJ_VAL(name), peek(vm, 0));
+                break;
+            }
             case OP_EQUAL: {
                 Value b = pop(vm);
                 Value a = pop(vm);
@@ -145,6 +193,7 @@ static InterpretResult run(VM *vm) {
 
 #undef READ_BYTE
 #undef READ_CONSTANT
+#undef READ_STRING
 
 #undef BINARY_OP
 }
@@ -160,6 +209,7 @@ InterpretResult interpret(VM *vm, const char *source) {
 
     vm->chunk = &chunk;
     vm->ip = vm->chunk->code.data;
+    vm->source = (char*)source;
 
     InterpretResult result = run(vm);
     
