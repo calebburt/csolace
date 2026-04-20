@@ -110,6 +110,21 @@ static void emitBytes(Parser *parser, uint8_t byte1, uint8_t byte2) {
     emitByte(parser, byte2);
 }
 
+static void emitLoop(Parser *parser, int loopStart) {
+    emitByte(parser, OP_LOOP);
+
+    int offset = currentChunk(parser)->code.count - loopStart + 2;
+    if (offset > UINT16_MAX) error(parser, "Loop body too large.");
+
+    emitBytes(parser, (offset >> 8) & 0xff, offset & 0xff);
+}
+
+static int emitJump(Parser *parser, uint8_t instruction) {
+    emitByte(parser, instruction);
+    emitBytes(parser, 0xff, 0xff);
+    return currentChunk(parser)->code.count-2;
+}
+
 static uint8_t makeConstant(Parser *parser, Value value) {
     int constant = addConstant(currentChunk(parser), value);
     if (constant > UINT8_MAX) {
@@ -122,6 +137,17 @@ static uint8_t makeConstant(Parser *parser, Value value) {
 
 static void emitConstant(Parser *parser, Value value) {
     emitBytes(parser, OP_CONSTANT, makeConstant(parser, value));
+}
+
+static void patchJump(Parser *parser, int offset) {
+    int jump = currentChunk(parser)->code.count - offset - 2;
+
+    if (jump > UINT16_MAX) {
+        error(parser, "Too much code to jump over.");
+    }
+
+    currentChunk(parser)->code.data[offset] = (jump >> 8) & 0xff;
+    currentChunk(parser)->code.data[offset + 1] = jump & 0xff;
 }
 
 
@@ -192,6 +218,9 @@ static void namedVariable(Parser *parser, Token name, bool canAssign) {
     if (match(parser, TOKEN_COLON)) {
         parseType(parser);
         consume(parser, TOKEN_EQUAL, "Expect value for variable after type annotation.");
+        expression(parser);
+        emitBytes(parser, OP_SET_GLOBAL, arg);
+        return;
     } else {
         if (!check(parser, TOKEN_EQUAL)) {
             emitBytes(parser, OP_GET_GLOBAL, arg);
@@ -208,6 +237,27 @@ static void variable(Parser *parser, bool canAssign) {
     namedVariable(parser, parser->previous, canAssign);
 }
 
+static void and_(Parser *parser, bool canAssign) {
+    int endJump = emitJump(parser, OP_JUMP_IF_FALSE);
+
+    emitByte(parser, OP_POP);
+    parsePrescedence(parser, PREC_AND);
+
+    patchJump(parser, endJump);
+}
+
+static void or_(Parser *parser, bool canAssign) {
+    int elseJump = emitJump(parser, OP_JUMP_IF_FALSE);
+    int endJump = emitJump(parser, OP_JUMP);
+
+    patchJump(parser, elseJump);
+    emitByte(parser, OP_POP);
+
+
+    parsePrescedence(parser, PREC_OR);
+    patchJump(parser, endJump);
+}
+
 static void unary(Parser *parser, bool canAssign) {
     TokenType operatorType = parser->previous.type;
 
@@ -218,6 +268,59 @@ static void unary(Parser *parser, bool canAssign) {
         case TOKEN_MINUS: emitByte(parser, OP_NEGATE); break;
         default: return;
     }
+}
+
+static void ifExpr(Parser *parser, bool canAssign) {
+    expression(parser);
+
+    int thenJump = emitJump(parser, OP_JUMP_IF_FALSE);
+    emitByte(parser, OP_POP);
+    while (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE) && !parser->hadError) {
+        expression(parser);
+        if (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE)) emitByte(parser, OP_POP);
+    }
+
+    int elseJump = emitJump(parser, OP_JUMP);
+
+    patchJump(parser, thenJump);
+    emitByte(parser, OP_POP);
+
+    if (match(parser, TOKEN_ELSE)) {
+        while (!check(parser, TOKEN_END) && !parser->hadError) {
+            expression(parser);
+            if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
+        }
+        consume(parser, TOKEN_END, "Expected 'end' after else block.");
+    } else {
+        consume(parser, TOKEN_END, "Expected 'end' after if block.");
+        emitByte(parser, OP_NIL);
+    }
+    patchJump(parser, elseJump);
+}
+
+static void whileExpr(Parser *parser, bool canAssign) {
+    // Initial value on stack for first iteration
+    emitByte(parser, OP_NIL);
+    
+    int loopStart = currentChunk(parser)->code.count;
+    expression(parser);
+
+    int exitJump = emitJump(parser, OP_JUMP_IF_FALSE);
+    emitByte(parser, OP_POP);  // pop condition
+    emitByte(parser, OP_POP);  // pop previous iteration result
+    
+    while (!check(parser, TOKEN_END) && !parser->hadError) {
+        expression(parser);
+        if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
+    }
+    consume(parser, TOKEN_END, "Expected 'end' after while body.");
+
+    // At this point, body result is on stack
+    // Loop back to test condition again with body result still there
+    emitLoop(parser, loopStart);
+
+    patchJump(parser, exitJump);
+    emitByte(parser, OP_POP);  // pop the false condition
 }
 
 
@@ -241,23 +344,23 @@ ParseRule rules[] = {
     [TOKEN_IDENTIFIER]    = {variable, NULL,   PREC_NONE},
     [TOKEN_STRING]        = {string,   NULL,   PREC_NONE},
     [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
-    [TOKEN_AND]           = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_AND]           = {and_,     NULL,   PREC_NONE},
     [TOKEN_CLASS]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_ELSE]          = {NULL,     NULL,   PREC_NONE},
     [TOKEN_END]           = {NULL,     NULL,   PREC_NONE},
     [TOKEN_FALSE]         = {literal,  NULL,   PREC_NONE},
     [TOKEN_FOR]           = {NULL,     NULL,   PREC_NONE},
     [TOKEN_DEF]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_IF]            = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_IF]            = {ifExpr,   NULL,   PREC_NONE},
     [TOKEN_NIL]           = {literal,  NULL,   PREC_NONE},
     [TOKEN_NOT]           = {unary,    NULL,   PREC_NONE},
-    [TOKEN_OR]            = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_OR]            = {or_,      NULL,   PREC_NONE},
     [TOKEN_PRINT]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_RETURN]        = {NULL,     NULL,   PREC_NONE},
     [TOKEN_SUPER]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_SELF]          = {NULL,     NULL,   PREC_NONE},
     [TOKEN_TRUE]          = {literal,  NULL,   PREC_NONE},
-    [TOKEN_WHILE]         = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_WHILE]         = {whileExpr,NULL,   PREC_NONE},
     [TOKEN_ERROR]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_EOF]           = {NULL,     NULL,   PREC_NONE},
 };
@@ -306,7 +409,7 @@ bool compile(VM *vm, const char *source, Chunk *chunk) {
     
     advance(&parser);
     
-    while (!match(&parser, TOKEN_EOF)) {
+    while (!match(&parser, TOKEN_EOF) && !parser.hadError) {
         expression(&parser);
         emitByte(&parser, OP_PRINT);
     }

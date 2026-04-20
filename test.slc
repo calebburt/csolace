@@ -5,4 +5,20 @@ hi
 hi = hi + 42
 hi: String = "hello"
 hi: Number = 5389 * 25789 / 38796279
-hi = hi + "hi"
+# hi = hi + "hi"
+
+if hi
+    "hi exists"
+else
+    "hi is false or nil"
+end
+
+if not hi
+    "yay"
+end
+
+i = 0
+while i < 10
+    i = i + 1
+    i
+end
