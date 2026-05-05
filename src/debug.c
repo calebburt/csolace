@@ -35,6 +35,12 @@ static int constantInstruction(const char *name, Chunk *chunk, int offset) {
     return offset + 2;
 }
 
+static int byteInstruction(const char *name, Chunk *chunk, int offset) {
+    uint8_t slot = chunk->code.data[offset+1];
+    printf("%-16s %4d\n", name, slot);
+    return offset + 2;
+}
+
 static int jumpInstruction(const char *name, int sign, Chunk *chunk, int offset) {
     uint16_t jump = (uint16_t)(chunk->code.data[offset+1] << 8);
     jump |= chunk->code.data[offset+2];
@@ -62,8 +68,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
         case OP_TRUE: return simpleInstruction("OP_TRUE", offset);
         case OP_FALSE: return simpleInstruction("OP_FALSE", offset);
         case OP_POP: return simpleInstruction("OP_POP", offset);
-        case OP_GET_GLOBAL: return constantInstruction("OP_GET_GLOBAL", chunk, offset);
-        case OP_SET_GLOBAL: return constantInstruction("OP_SET_GLOBAL", chunk, offset);
+        case OP_GET_LOCAL: return byteInstruction("OP_GET_LOCAL", chunk, offset);
+        case OP_SET_LOCAL: return byteInstruction("OP_SET_LOCAL", chunk, offset);
         case OP_EQUAL: return simpleInstruction("OP_EQUAL", offset);
         case OP_GREATER: return simpleInstruction("OP_GREATER", offset);
         case OP_LESS: return simpleInstruction("OP_LESS", offset);

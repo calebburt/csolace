@@ -1,19 +1,10 @@
 #include "common.h"
 #include "compiler.h"
 #include "lexer.h"
+#include "type.h"
 #ifdef SLC_DEBUG
 #include "debug.h"
 #endif
-
-typedef struct {
-    Token current;
-    Token previous;
-    Lexer *lexer;
-    Chunk *compilingChunk;
-    VM *vm;
-    bool hadError;
-    bool panicMode;
-} Parser;
 
 typedef enum {
     PREC_NONE,
@@ -28,7 +19,31 @@ typedef enum {
     PREC_PRIMARY
 } Prescedence;
 
-typedef void (*ParseFn)(Parser* parser, bool canAssign);
+typedef struct {
+    Token name;
+    Type type;
+    int depth;
+} Local;
+
+typedef struct {
+    Local locals[UINT8_COUNT];
+    int localCount;
+    int scopeDepth;
+} Compiler;
+
+typedef struct {
+    Token current;
+    Token previous;
+    Lexer *lexer;
+    Compiler *currentCompiler;
+    Chunk *compilingChunk;
+    VM *vm;
+    Type prevType;
+    bool hadError;
+    bool panicMode;
+} Parser;
+
+typedef Type (*ParseFn)(Parser* parser, bool canAssign);
 
 typedef struct {
     ParseFn prefix;
@@ -42,13 +57,13 @@ static Chunk *currentChunk(Parser *parser) {
 }
 
 
-static void errorAt(Parser *parser, Token *token, const char *message) {
+static void errorAtKind(Parser *parser, Token *token, const char *kind, const char *message) {
     if (parser->panicMode) return;
     parser->panicMode = true;
     if (token->type != TOKEN_ERROR)
-        fprintf(stderr, "\033[31mSyntaxError: %s \033[0m\n", message);
+        fprintf(stderr, "\033[31m%s: %s \033[0m\n", kind, message);
     else
-        fprintf(stderr, "\033[31mSyntaxError: %s \033[0m\n", token->start);
+        fprintf(stderr, "\033[31m%s: %s \033[0m\n", kind, token->start);
     if (token->type == TOKEN_EOF) {
         fprintf(stderr, "\033[33m at end\033[0m");
     } else if (token->type == TOKEN_ERROR) {
@@ -61,12 +76,20 @@ static void errorAt(Parser *parser, Token *token, const char *message) {
     parser->hadError = true;
 }
 
+static void errorAt(Parser *parser, Token *token, const char *message) {
+    errorAtKind(parser, token, "SyntaxError", message);
+}
+
 static void errorAtCurrent(Parser *parser, const char *message) {
     errorAt(parser, &parser->current, message);
 }
 
 static void error(Parser *parser, const char *message) {
     errorAt(parser, &parser->previous, message);
+}
+
+static void typeError(Parser *parser, const char *message) {
+    errorAtKind(parser, &parser->previous, "TypeError", message);
 }
 
 
@@ -139,6 +162,11 @@ static void emitConstant(Parser *parser, Value value) {
     emitBytes(parser, OP_CONSTANT, makeConstant(parser, value));
 }
 
+static void initCompiler(Compiler *compiler) {
+    compiler->localCount = 0;
+    compiler->scopeDepth = 0;
+}
+
 static void patchJump(Parser *parser, int offset) {
     int jump = currentChunk(parser)->code.count - offset - 2;
 
@@ -155,98 +183,209 @@ static void endCompiler(Parser *parser) {
     emitByte(parser, OP_RETURN);
 }
 
+static void beginScope(Parser *parser) {
+    parser->currentCompiler->scopeDepth++;
+}
 
-static void expression(Parser *parser);
+static void endScope(Parser *parser) {
+    parser->currentCompiler->scopeDepth--;
+}
+
+
+static Type expression(Parser *parser);
 static ParseRule *getRule(TokenType type);
-static void parsePrescedence(Parser *parser, Prescedence prescedence);
+static Type parsePrescedence(Parser *parser, Prescedence prescedence);
 
-
-static uint8_t identifierConstant(Parser *parser, Token *name) {
-    return makeConstant(parser, OBJ_VAL(copyString(parser->vm, name->start, name->length)));
+static bool isErrorType(Parser *parser, Type t) {
+    return typesEqual(t, errorType(parser->vm));
 }
 
-static void binary(Parser *parser, bool canAssign) {
-    TokenType operatorType = parser->previous.type;
-    ParseRule* rule = getRule(operatorType);
-    parsePrescedence(parser, (Prescedence)(rule->prescedence + 1));
+static const char *typeName(Type t) {
+    return t.name == NULL ? "<unknown>" : t.name->chars;
+}
 
-    switch (operatorType) {
-        case TOKEN_BANG_EQUAL: emitBytes(parser, OP_EQUAL, OP_NOT); break;
-        case TOKEN_EQUAL_EQUAL: emitByte(parser, OP_EQUAL); break;
-        case TOKEN_GREATER: emitByte(parser, OP_GREATER); break;
-        case TOKEN_GREATER_EQUAL: emitByte(parser, OP_GREATER_EQUAL); break;
-        case TOKEN_LESS: emitByte(parser, OP_LESS); break;
-        case TOKEN_LESS_EQUAL: emitByte(parser, OP_LESS_EQUAL); break;
-        case TOKEN_PLUS: emitByte(parser, OP_ADD); break;
-        case TOKEN_MINUS: emitByte(parser, OP_SUBTRACT); break;
-        case TOKEN_STAR: emitByte(parser, OP_MULTIPLY); break;
-        case TOKEN_SLASH: emitByte(parser, OP_DIVIDE); break;
-        default: return; // Unreachable.
+static void typeMismatch(Parser *parser, Type expected, Type actual, const char *context) {
+    if (isErrorType(parser, expected) || isErrorType(parser, actual)) return;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "expected %s in %s, got %s",
+             typeName(expected), context, typeName(actual));
+    typeError(parser, buf);
+}
+
+static void expectNumber(Parser *parser, Type actual, const char *context) {
+    if (isErrorType(parser, actual)) return;
+    Type numberT = type(parser->vm, "Number");
+    if (!typesEqual(actual, numberT)) {
+        typeMismatch(parser, numberT, actual, context);
     }
 }
 
-static void literal(Parser *parser, bool canAssign) {
-    switch (parser->previous.type) {
-        case TOKEN_FALSE: emitByte(parser, OP_FALSE); break;
-        case TOKEN_NIL: emitByte(parser, OP_NIL); break;
-        case TOKEN_TRUE: emitByte(parser, OP_TRUE); break;
-        default: return;
+
+static int addLocal(Parser *parser, Token name, Type type) {
+    if (parser->currentCompiler->localCount == UINT8_COUNT) {
+        error(parser, "Too many local variables in function.");
+        return -1;
     }
+
+    int slot = parser->currentCompiler->localCount++;
+    Local *local = &parser->currentCompiler->locals[slot];
+    local->name = name;
+    local->depth = parser->currentCompiler->scopeDepth;
+    local->type = type;
+    return slot;
 }
 
-static void grouping(Parser *parser, bool canAssign) {
-    expression(parser);
-    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
-}
-
-static void number(Parser *parser, bool canAssign) {
-    double value = strtod(parser->previous.start, NULL);
-    emitConstant(parser, NUMBER_VAL(value));
-}
-
-static void string(Parser *parser, bool canAssign) {
-    emitConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start + 1, parser->previous.length - 2)));
-}
-
-static void parseType(Parser *parser) {
-    consume(parser, TOKEN_IDENTIFIER, "Expect type name."); // will amend later
-}
-
-static void namedVariable(Parser *parser, Token name, bool canAssign) {
-    uint8_t arg = identifierConstant(parser, &name);
-    
-    if (match(parser, TOKEN_COLON)) {
-        parseType(parser);
-        consume(parser, TOKEN_EQUAL, "Expect value for variable after type annotation.");
-        expression(parser);
-        emitBytes(parser, OP_SET_GLOBAL, arg);
-        return;
-    } else {
-        if (!check(parser, TOKEN_EQUAL)) {
-            emitBytes(parser, OP_GET_GLOBAL, arg);
-            return;
+static int resolveLocal(Parser *parser, Token *name) {
+    Compiler *compiler = parser->currentCompiler;
+    for (int i = compiler->localCount - 1; i >= 0; i--) {
+        Local *local = &compiler->locals[i];
+        if (name->length == local->name.length &&
+            memcmp(name->start, local->name.start, name->length) == 0) {
+            return i;
         }
     }
-    if (canAssign && match(parser, TOKEN_EQUAL)) {
-        expression(parser);
-        emitBytes(parser, OP_SET_GLOBAL, arg);
+    return -1;
+}
+
+static Type binary(Parser *parser, bool canAssign) {
+    TokenType operatorType = parser->previous.type;
+    Type leftType = parser->prevType;
+    ParseRule* rule = getRule(operatorType);
+    Type rightType = parsePrescedence(parser, (Prescedence)(rule->prescedence + 1));
+
+    Type numberT = type(parser->vm, "Number");
+    Type stringT = type(parser->vm, "String");
+    Type boolT = type(parser->vm, "Boolean");
+
+    switch (operatorType) {
+        case TOKEN_BANG_EQUAL: emitBytes(parser, OP_EQUAL, OP_NOT); return boolT;
+        case TOKEN_EQUAL_EQUAL: emitByte(parser, OP_EQUAL); return boolT;
+        case TOKEN_GREATER:
+            expectNumber(parser, leftType, "left operand of '>'");
+            expectNumber(parser, rightType, "right operand of '>'");
+            emitByte(parser, OP_GREATER); return boolT;
+        case TOKEN_GREATER_EQUAL:
+            expectNumber(parser, leftType, "left operand of '>='");
+            expectNumber(parser, rightType, "right operand of '>='");
+            emitByte(parser, OP_GREATER_EQUAL); return boolT;
+        case TOKEN_LESS:
+            expectNumber(parser, leftType, "left operand of '<'");
+            expectNumber(parser, rightType, "right operand of '<'");
+            emitByte(parser, OP_LESS); return boolT;
+        case TOKEN_LESS_EQUAL:
+            expectNumber(parser, leftType, "left operand of '<='");
+            expectNumber(parser, rightType, "right operand of '<='");
+            emitByte(parser, OP_LESS_EQUAL); return boolT;
+        case TOKEN_PLUS:
+            emitByte(parser, OP_ADD);
+            if (typesEqual(leftType, numberT) && typesEqual(rightType, numberT)) return numberT;
+            if (typesEqual(leftType, stringT) && typesEqual(rightType, stringT)) return stringT;
+            if (!isErrorType(parser, leftType) && !isErrorType(parser, rightType)) {
+                typeError(parser, "operator '+' requires two Numbers or two Strings");
+            }
+            return errorType(parser->vm);
+        case TOKEN_MINUS:
+            expectNumber(parser, leftType, "left operand of '-'");
+            expectNumber(parser, rightType, "right operand of '-'");
+            emitByte(parser, OP_SUBTRACT); return numberT;
+        case TOKEN_STAR:
+            expectNumber(parser, leftType, "left operand of '*'");
+            expectNumber(parser, rightType, "right operand of '*'");
+            emitByte(parser, OP_MULTIPLY); return numberT;
+        case TOKEN_SLASH:
+            expectNumber(parser, leftType, "left operand of '/'");
+            expectNumber(parser, rightType, "right operand of '/'");
+            emitByte(parser, OP_DIVIDE); return numberT;
+        default: return errorType(parser->vm); // Unreachable.
     }
 }
 
-static void variable(Parser *parser, bool canAssign) {
-    namedVariable(parser, parser->previous, canAssign);
+static Type literal(Parser *parser, bool canAssign) {
+    switch (parser->previous.type) {
+        case TOKEN_FALSE: emitByte(parser, OP_FALSE); return type(parser->vm, "Boolean");
+        case TOKEN_NIL: emitByte(parser, OP_NIL); return type(parser->vm, "Nil");
+        case TOKEN_TRUE: emitByte(parser, OP_TRUE); return type(parser->vm, "Boolean");
+        default: return errorType(parser->vm);
+    }
 }
 
-static void and_(Parser *parser, bool canAssign) {
+static Type grouping(Parser *parser, bool canAssign) {
+    Type type = expression(parser);
+    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+    return type;
+}
+
+static Type number(Parser *parser, bool canAssign) {
+    double value = strtod(parser->previous.start, NULL);
+    emitConstant(parser, NUMBER_VAL(value));
+    return type(parser->vm, "Number");
+}
+
+static Type string(Parser *parser, bool canAssign) {
+    emitConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start + 1, parser->previous.length - 2)));
+    return type(parser->vm, "String");
+}
+
+static Type parseType(Parser *parser) {
+    consume(parser, TOKEN_IDENTIFIER, "Expect type name."); // will amend later
+    return tokenType(parser->vm, parser->previous);
+}
+
+static Type namedVariable(Parser *parser, Token name, bool canAssign) {
+    if (match(parser, TOKEN_COLON)) {
+        Type declaredType = parseType(parser);
+        consume(parser, TOKEN_EQUAL, "Expect value for variable after type annotation.");
+        Type valueType = expression(parser);
+        if (!typesEqual(valueType, declaredType)) {
+            typeMismatch(parser, declaredType, valueType, "variable declaration");
+        }
+        int slot = addLocal(parser, name, declaredType);
+        if (slot < 0) return errorType(parser->vm);
+        emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
+        return declaredType;
+    }
+
+    int arg = resolveLocal(parser, &name);
+
+    if (canAssign && match(parser, TOKEN_EQUAL)) {
+        Type valueType = expression(parser);
+        if (arg == -1) {
+            int slot = addLocal(parser, name, valueType);
+            if (slot < 0) return errorType(parser->vm);
+            emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
+            return valueType;
+        }
+        Type existingType = parser->currentCompiler->locals[arg].type;
+        if (!typesEqual(valueType, existingType)) {
+            typeMismatch(parser, existingType, valueType, "assignment");
+        }
+        emitBytes(parser, OP_SET_LOCAL, (uint8_t)arg);
+        return existingType;
+    }
+
+    if (arg == -1) {
+        error(parser, "Undefined variable.");
+        return errorType(parser->vm);
+    }
+    emitBytes(parser, OP_GET_LOCAL, (uint8_t)arg);
+    return parser->currentCompiler->locals[arg].type;
+}
+
+static Type variable(Parser *parser, bool canAssign) {
+    return namedVariable(parser, parser->previous, canAssign);
+}
+
+static Type and_(Parser *parser, bool canAssign) {
     int endJump = emitJump(parser, OP_JUMP_IF_FALSE);
 
     emitByte(parser, OP_POP);
     parsePrescedence(parser, PREC_AND);
 
     patchJump(parser, endJump);
+    return type(parser->vm, "Boolean");
 }
 
-static void or_(Parser *parser, bool canAssign) {
+static Type or_(Parser *parser, bool canAssign) {
     int elseJump = emitJump(parser, OP_JUMP_IF_FALSE);
     int endJump = emitJump(parser, OP_JUMP);
 
@@ -256,49 +395,62 @@ static void or_(Parser *parser, bool canAssign) {
 
     parsePrescedence(parser, PREC_OR);
     patchJump(parser, endJump);
+    return type(parser->vm, "Boolean");
 }
 
-static void unary(Parser *parser, bool canAssign) {
+static Type unary(Parser *parser, bool canAssign) {
     TokenType operatorType = parser->previous.type;
 
-    parsePrescedence(parser, PREC_UNARY);
+    Type operandType = parsePrescedence(parser, PREC_UNARY);
 
     switch (operatorType) {
-        case TOKEN_NOT: emitByte(parser, OP_NOT); break;
-        case TOKEN_MINUS: emitByte(parser, OP_NEGATE); break;
-        default: return;
+        case TOKEN_NOT: emitByte(parser, OP_NOT); return type(parser->vm, "Boolean");
+        case TOKEN_MINUS:
+            expectNumber(parser, operandType, "operand of unary '-'");
+            emitByte(parser, OP_NEGATE);
+            return type(parser->vm, "Number");
+        default: return errorType(parser->vm);
     }
 }
 
-static void ifExpr(Parser *parser, bool canAssign) {
+static Type ifExpr(Parser *parser, bool canAssign) {
     expression(parser);
 
     int thenJump = emitJump(parser, OP_JUMP_IF_FALSE);
     emitByte(parser, OP_POP);
+    beginScope(parser);
+    Type thenType;
     while (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE) && !parser->hadError) {
-        expression(parser);
+        thenType = expression(parser);
         if (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE)) emitByte(parser, OP_POP);
     }
+    endScope(parser);
 
     int elseJump = emitJump(parser, OP_JUMP);
 
     patchJump(parser, thenJump);
     emitByte(parser, OP_POP);
 
+    Type elseType;
     if (match(parser, TOKEN_ELSE)) {
+        beginScope(parser);
         while (!check(parser, TOKEN_END) && !parser->hadError) {
-            expression(parser);
+            elseType = expression(parser);
             if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
         }
+        endScope(parser);
         consume(parser, TOKEN_END, "Expected 'end' after else block.");
     } else {
         consume(parser, TOKEN_END, "Expected 'end' after if block.");
         emitByte(parser, OP_NIL);
+        elseType = type(parser->vm, "Nil");
     }
     patchJump(parser, elseJump);
+
+    return unionType(parser->vm, thenType, elseType);
 }
 
-static void whileExpr(Parser *parser, bool canAssign) {
+static Type whileExpr(Parser *parser, bool canAssign) {
     // Initial value on stack for first iteration
     emitByte(parser, OP_NIL);
     
@@ -309,10 +461,13 @@ static void whileExpr(Parser *parser, bool canAssign) {
     emitByte(parser, OP_POP);  // pop condition
     emitByte(parser, OP_POP);  // pop previous iteration result
     
+    beginScope(parser);
+    Type lastType;
     while (!check(parser, TOKEN_END) && !parser->hadError) {
-        expression(parser);
+        lastType = expression(parser);
         if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
     }
+    endScope(parser);
     consume(parser, TOKEN_END, "Expected 'end' after while body.");
 
     // At this point, body result is on stack
@@ -321,6 +476,7 @@ static void whileExpr(Parser *parser, bool canAssign) {
 
     patchJump(parser, exitJump);
     emitByte(parser, OP_POP);  // pop the false condition
+    return lastType;
 }
 
 
@@ -366,34 +522,39 @@ ParseRule rules[] = {
 };
 
 
-static void parsePrescedence(Parser *parser, Prescedence prescedence) {
+static Type parsePrescedence(Parser *parser, Prescedence prescedence) {
     advance(parser);
     ParseFn prefixRule = getRule(parser->previous.type)->prefix;
+    Type exprType;
     if (prefixRule == NULL) {
         error(parser, "Expect expression.");
-        return;
+        return errorType(parser->vm);
     }
 
     bool canAssign = prescedence <= PREC_ASSIGNMENT;
-    prefixRule(parser, canAssign);
+    exprType = prefixRule(parser, canAssign);
+    parser->prevType = exprType;
 
     while (prescedence <= getRule(parser->current.type)->prescedence) {
         advance(parser);
         ParseFn infixRule = getRule(parser->previous.type)->infix;
-        infixRule(parser, canAssign);
+        exprType = infixRule(parser, canAssign);
+        parser->prevType = exprType;
     }
 
     if (canAssign && match(parser, TOKEN_EQUAL)) {
         error(parser, "Invalid assignment target.");
     }
+
+    return exprType;
 }
 
 static ParseRule *getRule(TokenType type) {
     return &rules[type];
 }
 
-static void expression(Parser *parser) {
-    parsePrescedence(parser, PREC_ASSIGNMENT);
+static Type expression(Parser *parser) {
+    return parsePrescedence(parser, PREC_ASSIGNMENT);
 }
 
 
@@ -406,6 +567,10 @@ bool compile(VM *vm, const char *source, Chunk *chunk) {
     parser.panicMode = false;
     parser.compilingChunk = chunk;
     parser.vm = vm;
+    parser.prevType = errorType(vm);
+    Compiler compiler;
+    initCompiler(&compiler);
+    parser.currentCompiler = &compiler;
     
     advance(&parser);
     
