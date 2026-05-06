@@ -8,6 +8,7 @@
 
 static void resetStack(VM *vm) {
     vm->stackTop = vm->stack;
+    vm->frameCount = 0;
 }
 
 char* getLineOfString(const char* str, int lineNo) {
@@ -56,12 +57,10 @@ static void runtimeError(VM *vm, const char *format, ...) {
 void initVM(VM *vm) {
     vm->chunk = NULL;
     vm->objects = NULL;
-    initTable(&vm->globals);
     resetStack(vm);
 }
 
 void freeVM(VM *vm) {
-    freeTable(&vm->globals);
     freeObjects(vm->objects);
 }
 

@@ -25,7 +25,15 @@ typedef struct {
     int depth;
 } Local;
 
+typedef enum {
+    TYPE_FUNCTION,
+    TYPE_SCRIPT
+} FunctionType;
+
 typedef struct {
+    ObjPrototype *function;
+    FunctionType type;
+
     Local locals[UINT8_COUNT];
     int localCount;
     int scopeDepth;
@@ -53,7 +61,7 @@ typedef struct {
 
 
 static Chunk *currentChunk(Parser *parser) {
-    return parser->compilingChunk;
+    return parser->currentCompiler->function->chunk;
 }
 
 
@@ -162,9 +170,17 @@ static void emitConstant(Parser *parser, Value value) {
     emitBytes(parser, OP_CONSTANT, makeConstant(parser, value));
 }
 
-static void initCompiler(Compiler *compiler) {
+static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) {
+    compiler->function = newPrototype(parser->vm);
+    compiler->type = type;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
+    compiler->function = newPrototype(parser->vm);
+
+    Local *local = &compiler->locals[compiler->localCount++];
+    local->depth = 0;
+    local->name.start = "";
+    local->name.length = 0;
 }
 
 static void patchJump(Parser *parser, int offset) {
@@ -179,8 +195,11 @@ static void patchJump(Parser *parser, int offset) {
 }
 
 
-static void endCompiler(Parser *parser) {
+static ObjPrototype *endCompiler(Parser *parser) {
     emitByte(parser, OP_RETURN);
+    ObjPrototype *function = parser->currentCompiler->function;
+
+    return function;
 }
 
 static void beginScope(Parser *parser) {
@@ -558,7 +577,7 @@ static Type expression(Parser *parser) {
 }
 
 
-bool compile(VM *vm, const char *source, Chunk *chunk) {
+ObjPrototype *compile(VM *vm, const char *source, Chunk *chunk) {
     Lexer lexer;
     initLexer(&lexer, source);
     Parser parser;
@@ -569,7 +588,7 @@ bool compile(VM *vm, const char *source, Chunk *chunk) {
     parser.vm = vm;
     parser.prevType = errorType(vm);
     Compiler compiler;
-    initCompiler(&compiler);
+    initCompiler(&compiler, &parser, TYPE_SCRIPT);
     parser.currentCompiler = &compiler;
     
     advance(&parser);
@@ -579,13 +598,13 @@ bool compile(VM *vm, const char *source, Chunk *chunk) {
         emitByte(&parser, OP_PRINT);
     }
     
-    endCompiler(&parser);
+    ObjPrototype *function = endCompiler(&parser);
 
     #ifdef SLC_DEBUG
     if (!parser.hadError) {
-        disassembleChunk(currentChunk(&parser), "code");
+        disassembleChunk(currentChunk(&parser), function->name != NULL ? function->name->chars : "<script>");
     }
     #endif
 
-    return !parser.hadError;
+    return parser.hadError ? NULL : function;
 }

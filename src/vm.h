@@ -6,15 +6,27 @@
 #include "value.h"
 #include "table.h"
 
-#define STACK_MAX 256
+#define FRAMES_MAX 64
+#define STACK_MAX (FRAMES_MAX * UINT8_COUNT)
+
+typedef struct {
+    ObjPrototype *function;
+    uint8_t *ip;
+    Value *slots;
+} CallFrame;
 
 typedef struct VM {
+    CallFrame frames[FRAMES_MAX]; // will replace with dynamic array maybe
+    int frameCount;
+
     Chunk *chunk;
     uint8_t *ip;
+
     Value stack[STACK_MAX]; // will replace with dynamic array maybe
     Value *stackTop;
-    Table globals;
+
     Obj *objects;
+
     char *source;
 } VM;
 

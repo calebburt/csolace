@@ -41,11 +41,11 @@ MAKE_DYNAMIC_ARRAY_H(uint8_t, Code)
 
 MAKE_DYNAMIC_ARRAY_H(LineInfo, LineInfoArray)
 
-typedef struct {
+typedef struct Chunk {
     Code code;
     ValueArray constants;
     LineInfoArray lines;
-} Chunk; 
+} Chunk;
 
 void initChunk(Chunk *chunk);
 void freeChunk(Chunk *chunk);

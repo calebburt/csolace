@@ -5,10 +5,21 @@
 
 MAKE_DYNAMIC_ARRAY(Value, ValueArray)
 
+static void printFunction(ObjPrototype *function) {
+    if (function->name == NULL) {
+        printf("<Function script>");
+        return;
+    }
+    printf("<Function %s>", function->name->chars);
+}
+
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
         case OBJ_STRING:
             printf("%s", AS_CSTRING(value));
+            break;
+        case OBJ_PROTOTYPE:
+            printFunction(AS_PROTOTYPE(value));
             break;
     }
 }
@@ -79,6 +90,14 @@ static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     return object;
 }
 
+ObjPrototype *newPrototype(VM *vm) {
+    ObjPrototype *prototype = ALLOCATE_OBJ(vm, ObjPrototype, OBJ_PROTOTYPE);
+    initTypeArray(&prototype->paramaters);
+    prototype->name = NULL;
+    initChunk(prototype->chunk);
+    return prototype;
+}
+
 ObjString *allocateString(VM *vm, char *chars, int length) {
     ObjString *string = ALLOCATE_OBJ(vm, ObjString, OBJ_STRING);
     string->length = length;
@@ -100,6 +119,13 @@ void freeObject(Obj *object) {
             ObjString *string = (ObjString*)object;
             FREE_ARRAY(char, string->chars, string->length + 1);
             FREE(ObjString, object);
+            break;
+        }
+        case OBJ_PROTOTYPE: {
+            ObjPrototype *prototype = (ObjPrototype*)object;
+            freeChunk(prototype->chunk);
+            freeTypeArray(&prototype->paramaters);
+            FREE(ObjPrototype, object);
             break;
         }
     }

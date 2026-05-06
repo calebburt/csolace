@@ -2,11 +2,14 @@
 #define SLC_VALUE_H
 
 #include "dynamic_array.h"
+#include "type.h"
 
 struct VM;
+struct Chunk;
 
 typedef enum {
     OBJ_STRING,
+    OBJ_PROTOTYPE,
 } ObjType;
 
 typedef struct Obj { // fix forward declaration
@@ -15,11 +18,18 @@ typedef struct Obj { // fix forward declaration
     struct Obj *next;
 } Obj;
 
-typedef struct {
+typedef struct ObjString {
     Obj obj;
     int length;
     char *chars;
 } ObjString;
+
+typedef struct {
+    Obj obj;
+    struct Chunk *chunk;
+    ObjString* name;
+    TypeArray paramaters;
+} ObjPrototype;
 
 typedef enum {
     VAL_BOOL,
@@ -57,9 +67,11 @@ static inline bool isObjType(Value value, ObjType type);
 #define OBJ_TYPE(value) (AS_OBJ(value)->type)
 
 #define IS_STRING(value) isObjType(value, OBJ_STRING)
+#define IS_PROTOTYPE(value) isObjType(value, OBJ_PROTOTYPE)
 
 #define AS_STRING(value) ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value) (AS_STRING(value)->chars)
+#define AS_PROTOTYPE(value) ((ObjPrototype*)AS_OBJ(value))
 
 
 MAKE_DYNAMIC_ARRAY_H(Value, ValueArray)
@@ -68,6 +80,7 @@ void printValue(Value value);
 bool valuesEqual(Value a, Value b);
 uint32_t hashValue(Value value);
 
+ObjPrototype *newPrototype(struct VM *vm);
 ObjString *copyString(struct VM *vm, const char *chars, int length);
 ObjString *allocateString(struct VM *vm, char *chars, int length);
 
