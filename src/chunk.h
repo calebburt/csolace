@@ -47,6 +47,15 @@ typedef struct Chunk {
     LineInfoArray lines;
 } Chunk;
 
+// ObjPrototype lives here (rather than in value.h) so its `chunk` field can be
+// embedded by value — value.h only sees a forward declaration.
+struct ObjPrototype {
+    Obj obj;
+    Chunk chunk;
+    ObjString *name;
+    TypeArray paramaters;
+};
+
 void initChunk(Chunk *chunk);
 void freeChunk(Chunk *chunk);
 void writeChunk(Chunk *chunk, uint8_t byte, int line);

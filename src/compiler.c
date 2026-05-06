@@ -61,7 +61,7 @@ typedef struct {
 
 
 static Chunk *currentChunk(Parser *parser) {
-    return parser->currentCompiler->function->chunk;
+    return &parser->currentCompiler->function->chunk;
 }
 
 
@@ -175,7 +175,6 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) 
     compiler->type = type;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
-    compiler->function = newPrototype(parser->vm);
 
     Local *local = &compiler->locals[compiler->localCount++];
     local->depth = 0;
@@ -577,14 +576,13 @@ static Type expression(Parser *parser) {
 }
 
 
-ObjPrototype *compile(VM *vm, const char *source, Chunk *chunk) {
+ObjPrototype *compile(VM *vm, const char *source) {
     Lexer lexer;
     initLexer(&lexer, source);
     Parser parser;
     parser.lexer = &lexer;
     parser.hadError = false;
     parser.panicMode = false;
-    parser.compilingChunk = chunk;
     parser.vm = vm;
     parser.prevType = errorType(vm);
     Compiler compiler;

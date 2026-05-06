@@ -47,8 +47,9 @@ static void runtimeError(VM *vm, const char *format, ...) {
     fprintf(stderr, "\033[0m\n");
     va_end(args);
 
-    size_t instruction = vm->ip - vm->chunk->code.data - 1;
-    int line = getLine(vm->chunk, (int)instruction).line;
+    CallFrame *frame = &vm->frames[vm->frameCount - 1];
+    size_t instruction = frame->ip - frame->function->chunk.code.data - 1;
+    int line = getLine(&frame->function->chunk, (int)instruction).line;
     fprintf(stderr, "\033[33m at line %d\033[0m\n", line);
     fprintf(stderr, "%3.0d | %s \n", line, getLineOfString(vm->source, line));
     resetStack(vm);
@@ -83,10 +84,11 @@ static bool isFalsey(Value value) {
 }
 
 static InterpretResult run(VM *vm) {
-#define READ_BYTE() (*vm->ip++)
-#define READ_CONSTANT() (vm->chunk->constants.data[READ_BYTE()])
+    CallFrame *frame = &vm->frames[vm->frameCount - 1];
+#define READ_BYTE() (*frame->ip++)
+#define READ_CONSTANT() (frame->function->chunk.constants.data[READ_BYTE()])
 #define READ_STRING() AS_STRING(READ_CONSTANT())
-#define READ_SHORT() ((vm->ip += 2, (uint16_t)((vm->ip[-2] << 8) | vm->ip[-1])))
+#define READ_SHORT() ((frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1])))
 
 #define BINARY_OP(vm, valueType, op) \
     do { \
@@ -109,7 +111,7 @@ static InterpretResult run(VM *vm) {
         }
         printf(" ]\n ");
 
-        disassembleInstruction(vm->chunk, (int)(vm->ip - vm->chunk->code.data));
+        disassembleInstruction(&frame->function->chunk, (int)(frame->ip - frame->function->chunk.code.data));
 #endif
         uint8_t instruction;
         switch (instruction = READ_BYTE()) {
@@ -124,12 +126,12 @@ static InterpretResult run(VM *vm) {
             case OP_POP: pop(vm); break;
             case OP_GET_LOCAL: {
                 uint8_t slot = READ_BYTE();
-                push(vm, vm->stack[slot]);
+                push(vm, frame->slots[slot]);
                 break;
             }
             case OP_SET_LOCAL: {
                 uint8_t slot = READ_BYTE();
-                vm->stack[slot] = peek(vm, 0);
+                frame->slots[slot] = peek(vm, 0);
                 break;
             }
             case OP_EQUAL: {
@@ -176,17 +178,17 @@ static InterpretResult run(VM *vm) {
             }
             case OP_JUMP: {
                 uint16_t offset = READ_SHORT();
-                vm->ip += offset;
+                frame->ip += offset;
                 break;
             }
             case OP_JUMP_IF_FALSE: {
                 uint16_t offset = READ_SHORT();
-                if (isFalsey(peek(vm, 0))) vm->ip += offset;
+                if (isFalsey(peek(vm, 0))) frame->ip += offset;
                 break;
             }
             case OP_LOOP: {
                 uint16_t offset = READ_SHORT();
-                vm->ip -= offset;
+                frame->ip -= offset;
                 break;
             }
             case OP_RETURN: {
@@ -210,20 +212,16 @@ static InterpretResult run(VM *vm) {
 }
 
 InterpretResult interpret(VM *vm, const char *source) {
-    Chunk chunk;
-    initChunk(&chunk);
+    ObjPrototype *function = compile(vm, source);
+    if (function == NULL) return INTERPRET_COMPILE_ERROR;
 
-    if (!compile(vm, source, &chunk)) {
-        freeChunk(&chunk);
-        return INTERPRET_COMPILE_ERROR;
-    }
-
-    vm->chunk = &chunk;
-    vm->ip = vm->chunk->code.data;
     vm->source = (char*)source;
 
-    InterpretResult result = run(vm);
-    
-    freeChunk(&chunk);
-    return result;
+    push(vm, OBJ_VAL(function));
+    CallFrame *frame = &vm->frames[vm->frameCount++];
+    frame->function = function;
+    frame->ip = function->chunk.code.data;
+    frame->slots = vm->stack;
+
+    return run(vm);
 }

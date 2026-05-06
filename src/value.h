@@ -5,7 +5,6 @@
 #include "type.h"
 
 struct VM;
-struct Chunk;
 
 typedef enum {
     OBJ_STRING,
@@ -24,12 +23,8 @@ typedef struct ObjString {
     char *chars;
 } ObjString;
 
-typedef struct {
-    Obj obj;
-    struct Chunk *chunk;
-    ObjString* name;
-    TypeArray paramaters;
-} ObjPrototype;
+// ObjPrototype is defined in chunk.h (it embeds a Chunk by value).
+typedef struct ObjPrototype ObjPrototype;
 
 typedef enum {
     VAL_BOOL,

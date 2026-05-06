@@ -3,6 +3,6 @@
 
 #include "vm.h"
 
-ObjPrototype *compile(VM *vm, const char *source, Chunk *chunk);
+ObjPrototype *compile(VM *vm, const char *source);
 
 #endif
