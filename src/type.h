@@ -14,6 +14,9 @@ typedef struct Type {
 } Type;
 
 bool typesEqual(Type one, Type two);
+// true iff every variant of `sub` appears in `super`. Number is a subtype of
+// Number | Nil; Number | Nil is not a subtype of Number.
+bool isSubtype(Type sub, Type super);
 Type type(struct VM *vm, char *name);
 Type tokenType(struct VM *vm, Token token);
 Type unionType(struct VM *vm, Type one, Type two);

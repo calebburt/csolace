@@ -205,8 +205,28 @@ static void beginScope(Parser *parser) {
     parser->currentCompiler->scopeDepth++;
 }
 
+// Closes the current scope. The body of an if/while is an expression whose
+// value sits on top of the stack; any locals declared inside that body live
+// on the stack just below the result. Without cleanup, each loop iteration
+// would leak its body-locals onto the stack, overflowing on the 50th-ish
+// iteration. Slide the result down into the first soon-to-be-popped slot,
+// then pop the now-redundant values above it.
 static void endScope(Parser *parser) {
-    parser->currentCompiler->scopeDepth--;
+    Compiler *c = parser->currentCompiler;
+    c->scopeDepth--;
+    int popCount = 0;
+    while (c->localCount > 0 &&
+           c->locals[c->localCount - 1].depth > c->scopeDepth) {
+        popCount++;
+        c->localCount--;
+    }
+    if (popCount > 0) {
+        int firstSlot = c->localCount;
+        emitBytes(parser, OP_SET_LOCAL, (uint8_t)firstSlot);
+        for (int i = 0; i < popCount; i++) {
+            emitByte(parser, OP_POP);
+        }
+    }
 }
 
 
@@ -218,16 +238,28 @@ static bool isErrorType(Parser *parser, Type t) {
     return typesEqual(t, errorType(parser->vm));
 }
 
-static const char *typeName(Type t) {
-    return t.name == NULL ? "<unknown>" : t.name->chars;
+// Writes a human-readable rendering of `t` into buf, joining variants with " | ".
+// Returns the number of bytes written (excluding terminator), clamped to bufSize.
+static int formatType(Type t, char *buf, int bufSize) {
+    int written = 0;
+    for (Type *cur = &t; cur != NULL && written < bufSize - 1; cur = cur->next) {
+        const char *name = cur->name == NULL ? "<unknown>" : cur->name->chars;
+        const char *sep = (cur == &t) ? "" : " | ";
+        int n = snprintf(buf + written, bufSize - written, "%s%s", sep, name);
+        if (n < 0) break;
+        written += n;
+    }
+    return written;
 }
 
 static void typeMismatch(Parser *parser, Type expected, Type actual, const char *context) {
     if (isErrorType(parser, expected) || isErrorType(parser, actual)) return;
-    char buf[256];
-    snprintf(buf, sizeof(buf), "expected %s in %s, got %s",
-             typeName(expected), context, typeName(actual));
-    typeError(parser, buf);
+    char expectedBuf[128], actualBuf[128], msg[384];
+    formatType(expected, expectedBuf, sizeof(expectedBuf));
+    formatType(actual, actualBuf, sizeof(actualBuf));
+    snprintf(msg, sizeof(msg), "expected %s in %s, got %s",
+             expectedBuf, context, actualBuf);
+    typeError(parser, msg);
 }
 
 static void expectNumber(Parser *parser, Type actual, const char *context) {
@@ -345,8 +377,13 @@ static Type string(Parser *parser, bool canAssign) {
 }
 
 static Type parseType(Parser *parser) {
-    consume(parser, TOKEN_IDENTIFIER, "Expect type name."); // will amend later
-    return tokenType(parser->vm, parser->previous);
+    consume(parser, TOKEN_IDENTIFIER, "Expect type name.");
+    Type type = tokenType(parser->vm, parser->previous);
+    while (match(parser, TOKEN_PIPE)) {
+        consume(parser, TOKEN_IDENTIFIER, "Expect type name after pipe.");
+        type = unionType(parser->vm, type, tokenType(parser->vm, parser->previous));
+    }
+    return type;
 }
 
 static Type namedVariable(Parser *parser, Token name, bool canAssign) {
@@ -354,7 +391,7 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
         Type declaredType = parseType(parser);
         consume(parser, TOKEN_EQUAL, "Expect value for variable after type annotation.");
         Type valueType = expression(parser);
-        if (!typesEqual(valueType, declaredType)) {
+        if (!isSubtype(valueType, declaredType)) {
             typeMismatch(parser, declaredType, valueType, "variable declaration");
         }
         int slot = addLocal(parser, name, declaredType);
@@ -374,7 +411,7 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
             return valueType;
         }
         Type existingType = parser->currentCompiler->locals[arg].type;
-        if (!typesEqual(valueType, existingType)) {
+        if (!isSubtype(valueType, existingType)) {
             typeMismatch(parser, existingType, valueType, "assignment");
         }
         emitBytes(parser, OP_SET_LOCAL, (uint8_t)arg);
@@ -393,17 +430,28 @@ static Type variable(Parser *parser, bool canAssign) {
     return namedVariable(parser, parser->previous, canAssign);
 }
 
+// Coerce the value on top of the stack to a real Boolean. `OP_NOT` pushes
+// `BOOL_VAL(isFalsey(pop))`, so applying it twice yields `BOOL_VAL(!isFalsey(x))`
+// — the truthiness of x as a Boolean. Needed so the static `Boolean` result
+// type isn't a lie when short-circuit leaves an operand of any type on the stack.
+static void emitCoerceBool(Parser *parser) {
+    emitBytes(parser, OP_NOT, OP_NOT);
+}
+
 static Type and_(Parser *parser, bool canAssign) {
+    emitCoerceBool(parser);                              // coerce left
     int endJump = emitJump(parser, OP_JUMP_IF_FALSE);
 
     emitByte(parser, OP_POP);
     parsePrescedence(parser, PREC_AND);
+    emitCoerceBool(parser);                              // coerce right
 
     patchJump(parser, endJump);
     return type(parser->vm, "Boolean");
 }
 
 static Type or_(Parser *parser, bool canAssign) {
+    emitCoerceBool(parser);                              // coerce left
     int elseJump = emitJump(parser, OP_JUMP_IF_FALSE);
     int endJump = emitJump(parser, OP_JUMP);
 
@@ -412,6 +460,7 @@ static Type or_(Parser *parser, bool canAssign) {
 
 
     parsePrescedence(parser, PREC_OR);
+    emitCoerceBool(parser);                              // coerce right
     patchJump(parser, endJump);
     return type(parser->vm, "Boolean");
 }
@@ -437,11 +486,14 @@ static Type ifExpr(Parser *parser, bool canAssign) {
     int thenJump = emitJump(parser, OP_JUMP_IF_FALSE);
     emitByte(parser, OP_POP);
     beginScope(parser);
-    Type thenType;
+    Type thenType = type(parser->vm, "Nil");
+    bool thenEmpty = true;
     while (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE) && !parser->hadError) {
         thenType = expression(parser);
+        thenEmpty = false;
         if (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE)) emitByte(parser, OP_POP);
     }
+    if (thenEmpty) emitByte(parser, OP_NIL);  // keep stack balanced when body is empty
     endScope(parser);
 
     int elseJump = emitJump(parser, OP_JUMP);
@@ -449,19 +501,21 @@ static Type ifExpr(Parser *parser, bool canAssign) {
     patchJump(parser, thenJump);
     emitByte(parser, OP_POP);
 
-    Type elseType;
+    Type elseType = type(parser->vm, "Nil");
     if (match(parser, TOKEN_ELSE)) {
         beginScope(parser);
+        bool elseEmpty = true;
         while (!check(parser, TOKEN_END) && !parser->hadError) {
             elseType = expression(parser);
+            elseEmpty = false;
             if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
         }
+        if (elseEmpty) emitByte(parser, OP_NIL);
         endScope(parser);
         consume(parser, TOKEN_END, "Expected 'end' after else block.");
     } else {
         consume(parser, TOKEN_END, "Expected 'end' after if block.");
         emitByte(parser, OP_NIL);
-        elseType = type(parser->vm, "Nil");
     }
     patchJump(parser, elseJump);
 
@@ -471,20 +525,23 @@ static Type ifExpr(Parser *parser, bool canAssign) {
 static Type whileExpr(Parser *parser, bool canAssign) {
     // Initial value on stack for first iteration
     emitByte(parser, OP_NIL);
-    
+
     int loopStart = currentChunk(parser)->code.count;
     expression(parser);
 
     int exitJump = emitJump(parser, OP_JUMP_IF_FALSE);
     emitByte(parser, OP_POP);  // pop condition
     emitByte(parser, OP_POP);  // pop previous iteration result
-    
+
     beginScope(parser);
-    Type lastType;
+    Type lastType = type(parser->vm, "Nil");
+    bool bodyEmpty = true;
     while (!check(parser, TOKEN_END) && !parser->hadError) {
         lastType = expression(parser);
+        bodyEmpty = false;
         if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
     }
+    if (bodyEmpty) emitByte(parser, OP_NIL);  // keep stack balanced when body is empty
     endScope(parser);
     consume(parser, TOKEN_END, "Expected 'end' after while body.");
 

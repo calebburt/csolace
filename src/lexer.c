@@ -188,6 +188,7 @@ Token scanToken(Lexer *lexer) {
         case '/': return makeToken(lexer, TOKEN_SLASH);
         case '*': return makeToken(lexer, TOKEN_STAR);
         case ':': return makeToken(lexer, TOKEN_COLON);
+        case '|': return makeToken(lexer, TOKEN_PIPE);
         case '!': {
                 if (match(lexer, '=')) return makeToken(lexer, TOKEN_BANG_EQUAL); else break;
             }
