@@ -1,12 +1,14 @@
-n = 100
-
-a = 0
-b = 1
-i = 0
-while i < n
-    temp = a
-    a = b
-    b = temp + b
-    i = i + 1
+def fib(n: Number) > Number
+    a = 0
+    b = 1
+    i = 0
+    while i < n
+        temp = a
+        a = b
+        b = temp + b
+        i = i + 1
+    end
+    a
 end
-a
+
+fib(83)

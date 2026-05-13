@@ -30,7 +30,8 @@ typedef enum {
     TYPE_SCRIPT
 } FunctionType;
 
-typedef struct {
+typedef struct Compiler {
+    struct Compiler *enclosing;
     ObjPrototype *function;
     FunctionType type;
 
@@ -63,6 +64,8 @@ typedef struct {
 static Chunk *currentChunk(Parser *parser) {
     return &parser->currentCompiler->function->chunk;
 }
+
+#define NIL_TYPE type(parser->vm, "Nil")
 
 
 static void errorAtKind(Parser *parser, Token *token, const char *kind, const char *message) {
@@ -171,10 +174,15 @@ static void emitConstant(Parser *parser, Value value) {
 }
 
 static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) {
+    compiler->enclosing = parser->currentCompiler;
     compiler->function = newPrototype(parser->vm);
     compiler->type = type;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
+
+    if (type != TYPE_SCRIPT) {
+        compiler->function->name = copyString(parser->vm, parser->previous.start, parser->previous.length);
+    }
 
     Local *local = &compiler->locals[compiler->localCount++];
     local->depth = 0;
@@ -198,6 +206,11 @@ static ObjPrototype *endCompiler(Parser *parser) {
     emitByte(parser, OP_RETURN);
     ObjPrototype *function = parser->currentCompiler->function;
 
+    if (parser->currentCompiler->enclosing != NULL) {
+        parser->currentCompiler = parser->currentCompiler->enclosing;
+    } else {
+        parser->currentCompiler = NULL;
+    }
     return function;
 }
 
@@ -271,26 +284,56 @@ static void expectNumber(Parser *parser, Type actual, const char *context) {
 }
 
 
-static int addLocal(Parser *parser, Token name, Type type) {
-    if (parser->currentCompiler->localCount == UINT8_COUNT) {
+static bool identifiersEqual(Token *a, Token *b) {
+    if (a->length != b->length) return false;
+    return memcmp(a->start, b->start, a->length) == 0;
+}
+
+// Add a local with an "uninitialized" depth sentinel (-1). `markInitialized`
+// promotes it to the current scope depth once its initializer has run. This
+// lets `resolveLocal` distinguish "in scope" from "currently being initialized"
+// and flag `a = a` style self-references.
+static void addLocal(Parser *parser, Token name, Type type) {
+    Compiler *compiler = parser->currentCompiler;
+    if (compiler->localCount == UINT8_COUNT) {
         error(parser, "Too many local variables in function.");
-        return -1;
+        return;
     }
 
-    int slot = parser->currentCompiler->localCount++;
-    Local *local = &parser->currentCompiler->locals[slot];
+    Local *local = &compiler->locals[compiler->localCount++];
     local->name = name;
-    local->depth = parser->currentCompiler->scopeDepth;
+    local->depth = -1;
     local->type = type;
-    return slot;
+}
+
+// Reject redeclaration in the same scope; declarations in outer scopes are
+// allowed and shadowed. Scans newest-to-oldest and stops at the first local
+// whose depth is shallower than the current one.
+static void declareVariable(Parser *parser, Token name, Type type) {
+    Compiler *compiler = parser->currentCompiler;
+    for (int i = compiler->localCount - 1; i >= 0; i--) {
+        Local *local = &compiler->locals[i];
+        if (local->depth != -1 && local->depth < compiler->scopeDepth) break;
+        if (identifiersEqual(&name, &local->name)) {
+            error(parser, "Already a variable with this name in this scope.");
+        }
+    }
+    addLocal(parser, name, type);
+}
+
+static void markInitialized(Parser *parser) {
+    Compiler *compiler = parser->currentCompiler;
+    compiler->locals[compiler->localCount - 1].depth = compiler->scopeDepth;
 }
 
 static int resolveLocal(Parser *parser, Token *name) {
     Compiler *compiler = parser->currentCompiler;
     for (int i = compiler->localCount - 1; i >= 0; i--) {
         Local *local = &compiler->locals[i];
-        if (name->length == local->name.length &&
-            memcmp(name->start, local->name.start, name->length) == 0) {
+        if (identifiersEqual(name, &local->name)) {
+            if (local->depth == -1) {
+                error(parser, "Can't read local variable in its own initializer.");
+            }
             return i;
         }
     }
@@ -353,7 +396,7 @@ static Type binary(Parser *parser, bool canAssign) {
 static Type literal(Parser *parser, bool canAssign) {
     switch (parser->previous.type) {
         case TOKEN_FALSE: emitByte(parser, OP_FALSE); return type(parser->vm, "Boolean");
-        case TOKEN_NIL: emitByte(parser, OP_NIL); return type(parser->vm, "Nil");
+        case TOKEN_NIL: emitByte(parser, OP_NIL); return NIL_TYPE;
         case TOKEN_TRUE: emitByte(parser, OP_TRUE); return type(parser->vm, "Boolean");
         default: return errorType(parser->vm);
     }
@@ -387,30 +430,41 @@ static Type parseType(Parser *parser) {
 }
 
 static Type namedVariable(Parser *parser, Token name, bool canAssign) {
+    Compiler *compiler = parser->currentCompiler;
+
     if (match(parser, TOKEN_COLON)) {
         Type declaredType = parseType(parser);
         consume(parser, TOKEN_EQUAL, "Expect value for variable after type annotation.");
+        // Declare before the initializer so a self-reference resolves to this
+        // local with depth=-1 and is rejected by resolveLocal.
+        declareVariable(parser, name, declaredType);
         Type valueType = expression(parser);
         if (!isSubtype(valueType, declaredType)) {
             typeMismatch(parser, declaredType, valueType, "variable declaration");
         }
-        int slot = addLocal(parser, name, declaredType);
-        if (slot < 0) return errorType(parser->vm);
-        emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
+        markInitialized(parser);
+        uint8_t slot = (uint8_t)(compiler->localCount - 1);
+        emitBytes(parser, OP_GET_LOCAL, slot);
         return declaredType;
     }
 
     int arg = resolveLocal(parser, &name);
 
     if (canAssign && match(parser, TOKEN_EQUAL)) {
-        Type valueType = expression(parser);
         if (arg == -1) {
-            int slot = addLocal(parser, name, valueType);
-            if (slot < 0) return errorType(parser->vm);
-            emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
+            // Implicit declaration: type is inferred from the initializer, so
+            // we declare with a placeholder, evaluate, then patch the slot's
+            // type. Declaring first still gives us the self-init check.
+            declareVariable(parser, name, errorType(parser->vm));
+            Type valueType = expression(parser);
+            compiler->locals[compiler->localCount - 1].type = valueType;
+            markInitialized(parser);
+            uint8_t slot = (uint8_t)(compiler->localCount - 1);
+            emitBytes(parser, OP_GET_LOCAL, slot);
             return valueType;
         }
-        Type existingType = parser->currentCompiler->locals[arg].type;
+        Type valueType = expression(parser);
+        Type existingType = compiler->locals[arg].type;
         if (!isSubtype(valueType, existingType)) {
             typeMismatch(parser, existingType, valueType, "assignment");
         }
@@ -423,11 +477,60 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
         return errorType(parser->vm);
     }
     emitBytes(parser, OP_GET_LOCAL, (uint8_t)arg);
-    return parser->currentCompiler->locals[arg].type;
+    return compiler->locals[arg].type;
 }
 
 static Type variable(Parser *parser, bool canAssign) {
     return namedVariable(parser, parser->previous, canAssign);
+}
+
+static void function(Parser *parser, FunctionType funType) {
+    Compiler compiler;
+    initCompiler(&compiler, parser, funType);
+    parser->currentCompiler = &compiler;
+    beginScope(parser);
+
+    consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
+        do {
+            if (compiler.function->paramaters.count == UINT8_COUNT) {
+                error(parser, "Can't have more than 255 parameters.");
+                return;
+            }
+            consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
+            Token paramName = parser->previous;
+
+            Type paramType = NIL_TYPE;
+            if (match(parser, TOKEN_COLON)) {
+                paramType = parseType(parser);
+            } else {
+                paramType = type(parser->vm, "Any");
+            }
+
+            declareVariable(parser, paramName, paramType);
+            markInitialized(parser);
+            emitBytes(parser, OP_GET_LOCAL, (uint8_t)(compiler.localCount - 1));
+
+            appendTypeArray(&compiler.function->paramaters, paramType);
+        } while (match(parser, TOKEN_COMMA));
+    }
+    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+
+    if (match(parser, TOKEN_GREATER)) {
+        compiler.function->returnType = parseType(parser);
+    } else {
+        compiler.function->returnType = type(parser->vm, "Any");
+    }
+
+    while (!check(parser, TOKEN_END) && !parser->hadError) {
+        expression(parser);
+        if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
+    }
+
+    consume(parser, TOKEN_END, "Expect 'end' after function body.");
+
+    ObjPrototype *functionObj = endCompiler(parser);
+    emitBytes(parser, OP_CONSTANT, makeConstant(parser, OBJ_VAL(functionObj)));
 }
 
 // Coerce the value on top of the stack to a real Boolean. `OP_NOT` pushes
@@ -486,7 +589,7 @@ static Type ifExpr(Parser *parser, bool canAssign) {
     int thenJump = emitJump(parser, OP_JUMP_IF_FALSE);
     emitByte(parser, OP_POP);
     beginScope(parser);
-    Type thenType = type(parser->vm, "Nil");
+    Type thenType = NIL_TYPE;
     bool thenEmpty = true;
     while (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE) && !parser->hadError) {
         thenType = expression(parser);
@@ -501,7 +604,7 @@ static Type ifExpr(Parser *parser, bool canAssign) {
     patchJump(parser, thenJump);
     emitByte(parser, OP_POP);
 
-    Type elseType = type(parser->vm, "Nil");
+    Type elseType = NIL_TYPE;
     if (match(parser, TOKEN_ELSE)) {
         beginScope(parser);
         bool elseEmpty = true;
@@ -534,7 +637,7 @@ static Type whileExpr(Parser *parser, bool canAssign) {
     emitByte(parser, OP_POP);  // pop previous iteration result
 
     beginScope(parser);
-    Type lastType = type(parser->vm, "Nil");
+    Type lastType = NIL_TYPE;
     bool bodyEmpty = true;
     while (!check(parser, TOKEN_END) && !parser->hadError) {
         lastType = expression(parser);
@@ -552,6 +655,14 @@ static Type whileExpr(Parser *parser, bool canAssign) {
     patchJump(parser, exitJump);
     emitByte(parser, OP_POP);  // pop the false condition
     return lastType;
+}
+
+static Type funExpr(Parser *parser, bool canAssign) {
+    consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
+    declareVariable(parser, parser->previous, NIL_TYPE);
+    markInitialized(parser);
+    function(parser, TYPE_FUNCTION);
+    return NIL_TYPE;
 }
 
 
@@ -581,7 +692,7 @@ ParseRule rules[] = {
     [TOKEN_END]           = {NULL,     NULL,   PREC_NONE},
     [TOKEN_FALSE]         = {literal,  NULL,   PREC_NONE},
     [TOKEN_FOR]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_DEF]           = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_DEF]           = {funExpr,  NULL,   PREC_NONE},
     [TOKEN_IF]            = {ifExpr,   NULL,   PREC_NONE},
     [TOKEN_NIL]           = {literal,  NULL,   PREC_NONE},
     [TOKEN_NOT]           = {unary,    NULL,   PREC_NONE},
@@ -642,6 +753,7 @@ ObjPrototype *compile(VM *vm, const char *source) {
     parser.panicMode = false;
     parser.vm = vm;
     parser.prevType = errorType(vm);
+    parser.currentCompiler = NULL;  // initCompiler reads this for `enclosing`
     Compiler compiler;
     initCompiler(&compiler, &parser, TYPE_SCRIPT);
     parser.currentCompiler = &compiler;
@@ -657,7 +769,10 @@ ObjPrototype *compile(VM *vm, const char *source) {
 
     #ifdef SLC_DEBUG
     if (!parser.hadError) {
-        disassembleChunk(currentChunk(&parser), function->name != NULL ? function->name->chars : "<script>");
+        // endCompiler popped the script compiler off, so currentChunk(&parser)
+        // would dereference a NULL currentCompiler. Use the returned function's
+        // chunk directly.
+        disassembleChunk(&function->chunk, function->name != NULL ? function->name->chars : "<script>");
     }
     #endif
 

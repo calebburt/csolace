@@ -54,6 +54,7 @@ struct ObjPrototype {
     Chunk chunk;
     ObjString *name;
     TypeArray paramaters;
+    Type returnType;
 };
 
 void initChunk(Chunk *chunk);
