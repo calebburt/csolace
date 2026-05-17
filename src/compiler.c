@@ -16,6 +16,7 @@ typedef enum {
     PREC_TERM,
     PREC_FACTOR,
     PREC_UNARY,
+    PREC_CALL,
     PREC_PRIMARY
 } Prescedence;
 
@@ -484,7 +485,7 @@ static Type variable(Parser *parser, bool canAssign) {
     return namedVariable(parser, parser->previous, canAssign);
 }
 
-static void function(Parser *parser, FunctionType funType) {
+static Type function(Parser *parser, FunctionType funType) {
     Compiler compiler;
     initCompiler(&compiler, parser, funType);
     parser->currentCompiler = &compiler;
@@ -495,7 +496,7 @@ static void function(Parser *parser, FunctionType funType) {
         do {
             if (compiler.function->paramaters.count == UINT8_COUNT) {
                 error(parser, "Can't have more than 255 parameters.");
-                return;
+                return errorType(parser->vm);
             }
             consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
             Token paramName = parser->previous;
@@ -509,7 +510,6 @@ static void function(Parser *parser, FunctionType funType) {
 
             declareVariable(parser, paramName, paramType);
             markInitialized(parser);
-            emitBytes(parser, OP_GET_LOCAL, (uint8_t)(compiler.localCount - 1));
 
             appendTypeArray(&compiler.function->paramaters, paramType);
         } while (match(parser, TOKEN_COMMA));
@@ -526,12 +526,17 @@ static void function(Parser *parser, FunctionType funType) {
         expression(parser);
         if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
     }
+    emitByte(parser, OP_RETURN);
 
     consume(parser, TOKEN_END, "Expect 'end' after function body.");
 
+    Type funcType = functionType(parser->vm, compiler.function->returnType,
+                                 &compiler.function->paramaters);
     ObjPrototype *functionObj = endCompiler(parser);
     emitBytes(parser, OP_CONSTANT, makeConstant(parser, OBJ_VAL(functionObj)));
+    return funcType;
 }
+
 
 // Coerce the value on top of the stack to a real Boolean. `OP_NOT` pushes
 // `BOOL_VAL(isFalsey(pop))`, so applying it twice yields `BOOL_VAL(!isFalsey(x))`
@@ -581,6 +586,72 @@ static Type unary(Parser *parser, bool canAssign) {
             return type(parser->vm, "Number");
         default: return errorType(parser->vm);
     }
+}
+
+static Type retExpr(Parser *parser, bool canAssign) {
+    if (parser->currentCompiler->type == TYPE_SCRIPT) {
+        error(parser, "Can't return from top-level code.");
+        return errorType(parser->vm);
+    }
+
+    Type valueType = expression(parser);
+    Type expected = parser->currentCompiler->function->returnType;
+    if (!isSubtype(valueType, expected)) {
+        typeMismatch(parser, expected, valueType, "return value");
+    }
+    emitByte(parser, OP_RETURN);
+    return valueType;
+}
+
+static Type call(Parser *parser, bool canAssign) {
+    // Snapshot callee type before argumentList — expression() inside the loop
+    // will clobber parser->prevType with each argument's type.
+    Type calleeType = parser->prevType;
+
+    Type *retSlot = NULL;
+    Type *firstParamSlot = NULL;
+    bool fnTyped = isFunctionType(calleeType);
+    if (fnTyped && calleeType.generics != NULL) {
+        retSlot = calleeType.generics;
+        firstParamSlot = retSlot->next;
+    } else if (!isErrorType(parser, calleeType)) {
+        char buf[128], msg[256];
+        formatType(calleeType, buf, sizeof(buf));
+        snprintf(msg, sizeof(msg), "expected function, got %s", buf);
+        typeError(parser, msg);
+    }
+
+    uint8_t argCount = 0;
+    Type *paramSlot = firstParamSlot;
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
+        do {
+            Type argType = expression(parser);
+            if (fnTyped && paramSlot != NULL && paramSlot->generics != NULL) {
+                if (!isSubtype(argType, *paramSlot->generics)) {
+                    typeMismatch(parser, *paramSlot->generics, argType, "function argument");
+                }
+                paramSlot = paramSlot->next;
+            }
+            if (argCount == 255) typeError(parser, "Can't have more than 255 arguments.");
+            argCount++;
+        } while (match(parser, TOKEN_COMMA));
+    }
+    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+
+    if (fnTyped) {
+        int paramCount = 0;
+        for (Type *s = firstParamSlot; s != NULL; s = s->next) paramCount++;
+        if (paramCount != argCount) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "expected %d arguments, got %d", paramCount, argCount);
+            typeError(parser, msg);
+        }
+    }
+
+    emitBytes(parser, OP_CALL, argCount);
+
+    if (retSlot != NULL && retSlot->generics != NULL) return *retSlot->generics;
+    return errorType(parser->vm);
 }
 
 static Type ifExpr(Parser *parser, bool canAssign) {
@@ -661,13 +732,16 @@ static Type funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
     declareVariable(parser, parser->previous, NIL_TYPE);
     markInitialized(parser);
-    function(parser, TYPE_FUNCTION);
+    Type funcType = function(parser, TYPE_FUNCTION);
+    Compiler *c = parser->currentCompiler;
+    c->locals[c->localCount - 1].type = funcType;
+    emitByte(parser, OP_NIL);
     return NIL_TYPE;
 }
 
 
 ParseRule rules[] = {
-    [TOKEN_LEFT_PAREN]    = {grouping, NULL,   PREC_NONE},
+    [TOKEN_LEFT_PAREN]    = {grouping, call,   PREC_CALL},
     [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
     [TOKEN_COMMA]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_DOT]           = {NULL,     NULL,   PREC_NONE},
@@ -698,7 +772,7 @@ ParseRule rules[] = {
     [TOKEN_NOT]           = {unary,    NULL,   PREC_NONE},
     [TOKEN_OR]            = {or_,      NULL,   PREC_NONE},
     [TOKEN_PRINT]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_RETURN]        = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_RETURN]        = {retExpr,  NULL,   PREC_NONE},
     [TOKEN_SUPER]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_SELF]          = {NULL,     NULL,   PREC_NONE},
     [TOKEN_TRUE]          = {literal,  NULL,   PREC_NONE},

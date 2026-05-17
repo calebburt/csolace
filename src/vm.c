@@ -46,12 +46,16 @@ static void runtimeError(VM *vm, const char *format, ...) {
     vfprintf(stderr, format, args);
     fprintf(stderr, "\033[0m\n");
     va_end(args);
+    
+    for (int i = vm->frameCount - 1; i >= 0; i--) {
+        CallFrame *frame = &vm->frames[i];
+        ObjPrototype *function = frame->function;
+        size_t instruction = frame->ip - function->chunk.code.data - 1;
+        int line = getLine(&function->chunk, (int)instruction).line;
+        fprintf(stderr, "\033[33m at line %d\033 in %s\033[0m\n", line, function->name->chars);
+        fprintf(stderr, "%3.0d | %s \n", line, getLineOfString(vm->source, line));
+    }
 
-    CallFrame *frame = &vm->frames[vm->frameCount - 1];
-    size_t instruction = frame->ip - frame->function->chunk.code.data - 1;
-    int line = getLine(&frame->function->chunk, (int)instruction).line;
-    fprintf(stderr, "\033[33m at line %d\033[0m\n", line);
-    fprintf(stderr, "%3.0d | %s \n", line, getLineOfString(vm->source, line));
     resetStack(vm);
 }
 
@@ -77,6 +81,39 @@ Value pop(VM *vm) {
 
 static Value peek(VM *vm, int distance) {
     return vm->stackTop[-1 - distance];
+}
+
+static bool call(VM *vm, ObjPrototype *function, int argCount) {
+    if (argCount != function->paramaters.count) {
+        runtimeError(vm, "Expected %d arguments but got %d.", function->paramaters.count, argCount);
+        return false;
+    }
+
+    if (vm->frameCount == FRAMES_MAX) {
+        runtimeError(vm, "Stack overflow.");
+        return false;
+    }
+
+    CallFrame *frame = &vm->frames[vm->frameCount++];
+    frame->function = function;
+    frame->ip = function->chunk.code.data;
+    frame->slots = vm->stackTop - argCount - 1; // -1 for the callee
+
+    return true;
+}
+
+static bool callValue(VM *vm, Value callee, int argCount) {
+    if (IS_OBJ(callee)) {
+        switch (OBJ_TYPE(callee)) {
+            case OBJ_PROTOTYPE: {
+                return call(vm, AS_PROTOTYPE(callee), argCount);
+            }
+            default:
+                break; // Non-callable object type
+        }
+    }
+    runtimeError(vm, "Can only call functions and classes.");
+    return false;
 }
 
 static bool isFalsey(Value value) {
@@ -191,8 +228,26 @@ static InterpretResult run(VM *vm) {
                 frame->ip -= offset;
                 break;
             }
+            case OP_CALL: {
+                int argCount = READ_BYTE();
+                if (!callValue(vm, peek(vm, argCount), argCount)) {
+                    return INTERPRET_RUNTIME_ERROR;
+                }
+                frame = &vm->frames[vm->frameCount - 1];
+                break;
+            }
             case OP_RETURN: {
-                return INTERPRET_OK;
+                Value result = pop(vm);
+                vm->frameCount--;
+                if (vm->frameCount == 0) {
+                    pop(vm); // pop the script function
+                    return INTERPRET_OK;
+                }
+
+                vm->stackTop = frame->slots;
+                push(vm, result);
+                frame = &vm->frames[vm->frameCount - 1];
+                break;
             }
 
             case OP_PRINT: { //temp
@@ -218,10 +273,7 @@ InterpretResult interpret(VM *vm, const char *source) {
     vm->source = (char*)source;
 
     push(vm, OBJ_VAL(function));
-    CallFrame *frame = &vm->frames[vm->frameCount++];
-    frame->function = function;
-    frame->ip = function->chunk.code.data;
-    frame->slots = vm->stack;
+    call(vm, function, 0);
 
     return run(vm);
 }

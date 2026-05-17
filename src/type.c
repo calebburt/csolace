@@ -84,4 +84,37 @@ Type errorType(VM *vm) {
     return type(vm, "_ErrorType");
 }
 
+static Type *makeSlot(Type held) {
+    Type *slot = ALLOCATE(Type, 1);
+    slot->name = NULL;
+    slot->next = NULL;
+    Type *copy = ALLOCATE(Type, 1);
+    *copy = held;
+    slot->generics = copy;
+    return slot;
+}
+
+Type functionType(VM *vm, Type returnType, TypeArray *params) {
+    Type result;
+    result.name = copyString(vm, "Function", 8);
+    result.next = NULL;
+
+    Type *retSlot = makeSlot(returnType);
+    result.generics = retSlot;
+
+    Type *tail = retSlot;
+    for (int i = 0; i < params->count; i++) {
+        Type *slot = makeSlot(params->data[i]);
+        tail->next = slot;
+        tail = slot;
+    }
+    return result;
+}
+
+bool isFunctionType(Type t) {
+    if (t.name == NULL) return false;
+    if (t.name->length != 8) return false;
+    return memcmp(t.name->chars, "Function", 8) == 0;
+}
+
 MAKE_DYNAMIC_ARRAY(Type, TypeArray)
