@@ -331,6 +331,12 @@ static void markInitialized(Parser *parser) {
     compiler->locals[compiler->localCount - 1].depth = compiler->scopeDepth;
 }
 
+static uint8_t defineVariable(Parser *parser, Token name, Type type) {
+    declareVariable(parser, name, type);
+    markInitialized(parser);
+    return (uint8_t)(parser->currentCompiler->localCount - 1);
+}
+
 static int resolveLocal(Parser *parser, Token *name) {
     Compiler *compiler = parser->currentCompiler;
     for (int i = compiler->localCount - 1; i >= 0; i--) {
@@ -526,6 +532,13 @@ static Type function(Parser *parser, FunctionType funType) {
         compiler.function->returnType = type(parser->vm, "Any");
     }
 
+    Type funcType = functionType(parser->vm, compiler.function->returnType,
+                                 &compiler.function->paramaters);
+    compiler.locals[0].type = funcType;
+    if (compiler.enclosing != NULL && compiler.enclosing->localCount > 0) {
+        compiler.enclosing->locals[compiler.enclosing->localCount - 1].type = funcType;
+    }
+
     while (!check(parser, TOKEN_END) && !parser->hadError) {
         expression(parser);
         if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
@@ -534,8 +547,6 @@ static Type function(Parser *parser, FunctionType funType) {
 
     consume(parser, TOKEN_END, "Expect 'end' after function body.");
 
-    Type funcType = functionType(parser->vm, compiler.function->returnType,
-                                 &compiler.function->paramaters);
     ObjPrototype *functionObj = endCompiler(parser);
     emitBytes(parser, OP_CONSTANT, makeConstant(parser, OBJ_VAL(functionObj)));
     return funcType;
@@ -734,13 +745,12 @@ static Type whileExpr(Parser *parser, bool canAssign) {
 
 static Type funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
-    declareVariable(parser, parser->previous, NIL_TYPE);
-    markInitialized(parser);
-    Type funcType = function(parser, TYPE_FUNCTION);
-    Compiler *c = parser->currentCompiler;
-    c->locals[c->localCount - 1].type = funcType;
+    Compiler *outer = parser->currentCompiler;
+    uint8_t slot = defineVariable(parser, parser->previous, NIL_TYPE);
 
-    uint8_t slot = (uint8_t)(c->localCount - 1);
+    Type funcType = function(parser, TYPE_FUNCTION);
+    outer->locals[slot].type = funcType;
+
     emitBytes(parser, OP_SET_LOCAL, slot);
     emitByte(parser, OP_POP);
     emitByte(parser, OP_NIL);
