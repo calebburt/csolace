@@ -267,6 +267,8 @@ static InterpretResult run(VM *vm) {
 }
 
 InterpretResult interpret(VM *vm, const char *source) {
+    resetStack(vm);
+
     ObjPrototype *function = compile(vm, source);
     if (function == NULL) return INTERPRET_COMPILE_ERROR;
 

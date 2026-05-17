@@ -189,6 +189,10 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) 
     local->depth = 0;
     local->name.start = "";
     local->name.length = 0;
+
+    if (type != TYPE_SCRIPT) {
+        local->name = parser->previous;
+    }
 }
 
 static void patchJump(Parser *parser, int offset) {
@@ -735,6 +739,10 @@ static Type funExpr(Parser *parser, bool canAssign) {
     Type funcType = function(parser, TYPE_FUNCTION);
     Compiler *c = parser->currentCompiler;
     c->locals[c->localCount - 1].type = funcType;
+
+    uint8_t slot = (uint8_t)(c->localCount - 1);
+    emitBytes(parser, OP_SET_LOCAL, slot);
+    emitByte(parser, OP_POP);
     emitByte(parser, OP_NIL);
     return NIL_TYPE;
 }
