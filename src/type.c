@@ -10,8 +10,15 @@ static bool sameVariant(Type a, Type b) {
     return memcmp(a.name->chars, b.name->chars, a.name->length) == 0;
 }
 
+// `Any` is the universal supertype: a set containing Any accepts every variant.
+static bool isAny(Type t) {
+    if (t.name == NULL || t.name->length != 3) return false;
+    return memcmp(t.name->chars, "Any", 3) == 0;
+}
+
 static bool containsVariant(Type set, Type variant) {
     for (Type *cur = &set; cur != NULL; cur = cur->next) {
+        if (isAny(*cur)) return true;
         if (sameVariant(*cur, variant)) return true;
     }
     return false;

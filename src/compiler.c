@@ -2,6 +2,7 @@
 #include "compiler.h"
 #include "lexer.h"
 #include "type.h"
+#include "vm.h"
 #ifdef SLC_DEBUG
 #include "debug.h"
 #endif
@@ -345,6 +346,20 @@ static int resolveLocal(Parser *parser, Token *name) {
     return -1;
 }
 
+// Linear scan over the VM's native table. Native names are `const char *` (no
+// length stored) so we compare against the token via strncmp + a strlen check.
+static int resolveNative(Parser *parser, Token *name) {
+    VM *vm = parser->vm;
+    for (int i = 0; i < vm->nativeCount; i++) {
+        const char *nName = vm->natives[i]->name;
+        size_t nLen = strlen(nName);
+        if ((int)nLen == name->length && memcmp(nName, name->start, nLen) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static Type binary(Parser *parser, bool canAssign) {
     TokenType operatorType = parser->previous.type;
     Type leftType = parser->prevType;
@@ -459,7 +474,8 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
         if (arg == -1) {
             // Implicit declaration: type is inferred from the initializer, so
             // we declare with a placeholder, evaluate, then patch the slot's
-            // type. Declaring first still gives us the self-init check.
+            // type. Declaring first still gives us the self-init check. A
+            // local with the same name as a native simply shadows it.
             declareVariable(parser, name, errorType(parser->vm));
             Type valueType = expression(parser);
             compiler->locals[compiler->localCount - 1].type = valueType;
@@ -477,12 +493,19 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
         return existingType;
     }
 
-    if (arg == -1) {
-        error(parser, "Undefined variable.");
-        return errorType(parser->vm);
+    if (arg != -1) {
+        emitBytes(parser, OP_GET_LOCAL, (uint8_t)arg);
+        return compiler->locals[arg].type;
     }
-    emitBytes(parser, OP_GET_LOCAL, (uint8_t)arg);
-    return compiler->locals[arg].type;
+
+    int nativeIdx = resolveNative(parser, &name);
+    if (nativeIdx != -1) {
+        emitBytes(parser, OP_GET_NATIVE, (uint8_t)nativeIdx);
+        return parser->vm->nativeTypes[nativeIdx];
+    }
+
+    error(parser, "Undefined variable.");
+    return errorType(parser->vm);
 }
 
 static Type variable(Parser *parser, bool canAssign) {
@@ -857,7 +880,6 @@ ObjPrototype *compile(VM *vm, const char *source) {
     
     while (!match(&parser, TOKEN_EOF) && !parser.hadError) {
         expression(&parser);
-        emitByte(&parser, OP_PRINT);
     }
     
     ObjPrototype *function = endCompiler(&parser);

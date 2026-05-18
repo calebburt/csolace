@@ -4,10 +4,11 @@
 #include "dynamic_array.h"
 #include "type.h"
 
-struct VM;
+typedef struct VM VM;
 
 typedef enum {
     OBJ_STRING,
+    OBJ_NATIVE,
     OBJ_PROTOTYPE,
 } ObjType;
 
@@ -42,6 +43,15 @@ typedef struct {
     } as;
 } Value;
 
+// NativeFn must come after Value since it references Value by name.
+typedef bool (*NativeFn)(VM *vm, int argCount, Value *args, Value *out);
+
+typedef struct ObjNative {
+    Obj obj;
+    NativeFn function;
+    const char *name;
+} ObjNative;
+
 static inline bool isObjType(Value value, ObjType type);
 
 
@@ -63,10 +73,12 @@ static inline bool isObjType(Value value, ObjType type);
 
 #define IS_STRING(value) isObjType(value, OBJ_STRING)
 #define IS_PROTOTYPE(value) isObjType(value, OBJ_PROTOTYPE)
+#define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 
 #define AS_STRING(value) ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value) (AS_STRING(value)->chars)
 #define AS_PROTOTYPE(value) ((ObjPrototype*)AS_OBJ(value))
+#define AS_NATIVE(value) ((ObjNative*)AS_OBJ(value))
 
 
 MAKE_DYNAMIC_ARRAY_H(Value, ValueArray)
@@ -75,9 +87,10 @@ void printValue(Value value);
 bool valuesEqual(Value a, Value b);
 uint32_t hashValue(Value value);
 
-ObjPrototype *newPrototype(struct VM *vm);
-ObjString *copyString(struct VM *vm, const char *chars, int length);
-ObjString *allocateString(struct VM *vm, char *chars, int length);
+ObjPrototype *newPrototype(VM *vm);
+ObjString *copyString(VM *vm, const char *chars, int length);
+ObjString *allocateString(VM *vm, char *chars, int length);
+ObjNative *newNative(VM *vm, NativeFn function, const char *name);
 
 void freeObject(Obj *object);
 void freeObjects(Obj *objects);

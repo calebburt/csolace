@@ -13,6 +13,7 @@ typedef enum {
     OP_POP,
     OP_GET_LOCAL,
     OP_SET_LOCAL,
+    OP_GET_NATIVE,
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
@@ -29,8 +30,6 @@ typedef enum {
     OP_LOOP,
     OP_CALL,
     OP_RETURN,
-
-    OP_PRINT, // temp
 } Opcode;
 
 typedef struct {

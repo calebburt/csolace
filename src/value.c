@@ -18,6 +18,9 @@ void printObject(Value value) {
         case OBJ_STRING:
             printf("%s", AS_CSTRING(value));
             break;
+        case OBJ_NATIVE:
+            printf("<Function %s>", AS_NATIVE(value)->name);
+            break;
         case OBJ_PROTOTYPE:
             printFunction(AS_PROTOTYPE(value));
             break;
@@ -98,6 +101,13 @@ ObjPrototype *newPrototype(VM *vm) {
     return prototype;
 }
 
+ObjNative *newNative(VM *vm, NativeFn function, const char *name) {
+    ObjNative *native = ALLOCATE_OBJ(vm, ObjNative, OBJ_NATIVE);
+    native->function = function;
+    native->name = name;
+    return native;
+}
+
 ObjString *allocateString(VM *vm, char *chars, int length) {
     ObjString *string = ALLOCATE_OBJ(vm, ObjString, OBJ_STRING);
     string->length = length;
@@ -121,6 +131,9 @@ void freeObject(Obj *object) {
             FREE(ObjString, object);
             break;
         }
+        case OBJ_NATIVE:
+            FREE(ObjNative, object);
+            break;
         case OBJ_PROTOTYPE: {
             ObjPrototype *prototype = (ObjPrototype*)object;
             freeChunk(&prototype->chunk);

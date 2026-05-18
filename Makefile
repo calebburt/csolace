@@ -1,5 +1,5 @@
 solace: src/*.c src/*.h
-	gcc -o solace src/*.c -Wall -Wextra -pedantic -Wno-unused-parameter
+	gcc -o solace src/*.c -Wall -Wextra -pedantic -Wno-unused-parameter -O2
 
 .PHONY = run
 run: solace

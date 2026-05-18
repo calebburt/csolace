@@ -5,6 +5,7 @@
 #include "compiler.h"
 #include "debug.h"
 #include <stdarg.h>
+#include <time.h>
 
 static void resetStack(VM *vm) {
     vm->stackTop = vm->stack;
@@ -62,10 +63,51 @@ static void runtimeError(VM *vm, const char *format, ...) {
     resetStack(vm);
 }
 
+static bool clockNative(VM *vm, int argCount, Value *args, Value *out) {
+    (void)vm; (void)argCount; (void)args;
+    *out = NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+    return true;
+}
+
+static bool printNative(VM *vm, int argCount, Value *args, Value *out) {
+    printValue(args[0]);
+    *out = NIL_VAL;
+    return true;
+}
+
+static void defineBuiltinNatives(VM *vm) {
+    defineNative(vm, "clock", clockNative, type(vm, "Number"), NULL);
+
+    TypeArray printParams;
+    initTypeArray(&printParams);
+    appendTypeArray(&printParams, type(vm, "Any"));
+    defineNative(vm, "print", printNative, type(vm, "Nil"), &printParams);
+    freeTypeArray(&printParams);
+}
+
 void initVM(VM *vm) {
     vm->chunk = NULL;
     vm->objects = NULL;
+    vm->nativeCount = 0;
     resetStack(vm);
+    defineBuiltinNatives(vm);
+}
+
+void defineNative(VM *vm, const char *name, NativeFn fn,
+                  Type returnType, TypeArray *params) {
+    if (vm->nativeCount == NATIVES_MAX) {
+        fprintf(stderr, "Too many native functions registered.\n");
+        exit(70);
+    }
+    TypeArray empty;
+    if (params == NULL) {
+        initTypeArray(&empty);
+        params = &empty;
+    }
+    int idx = vm->nativeCount++;
+    vm->natives[idx] = newNative(vm, fn, name);
+    vm->nativeTypes[idx] = functionType(vm, returnType, params);
+    if (params == &empty) freeTypeArray(&empty);
 }
 
 void freeVM(VM *vm) {
@@ -110,6 +152,14 @@ static bool callValue(VM *vm, Value callee, int argCount) {
         switch (OBJ_TYPE(callee)) {
             case OBJ_PROTOTYPE: {
                 return call(vm, AS_PROTOTYPE(callee), argCount);
+            }
+            case OBJ_NATIVE: {
+                ObjNative *native = AS_NATIVE(callee);
+                Value result;
+                bool succeeded = native->function(vm, argCount, vm->stackTop - argCount, &result);
+                vm->stackTop -= argCount + 1; // Pop arguments and the callee
+                push(vm, result);
+                return succeeded;
             }
             default:
                 break; // Non-callable object type
@@ -172,6 +222,11 @@ static InterpretResult run(VM *vm) {
             case OP_SET_LOCAL: {
                 uint8_t slot = READ_BYTE();
                 frame->slots[slot] = peek(vm, 0);
+                break;
+            }
+            case OP_GET_NATIVE: {
+                uint8_t idx = READ_BYTE();
+                push(vm, OBJ_VAL(vm->natives[idx]));
                 break;
             }
             case OP_EQUAL: {
@@ -250,12 +305,6 @@ static InterpretResult run(VM *vm) {
                 vm->stackTop = frame->slots;
                 push(vm, result);
                 frame = &vm->frames[vm->frameCount - 1];
-                break;
-            }
-
-            case OP_PRINT: { //temp
-                printValue(pop(vm));
-                printf("\n");
                 break;
             }
         }

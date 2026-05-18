@@ -6,4 +6,4 @@ def fib(n: Number) > Number
     end
 end
 
-fib(50)
+print(fib(30))
