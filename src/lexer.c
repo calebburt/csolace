@@ -100,7 +100,6 @@ static TokenType identifierType(Lexer *lexer) {
             }
             break;
         case 'o': return checkKeyword(lexer, 1, 1, "r", TOKEN_OR);
-        case 'p': return checkKeyword(lexer, 1, 4, "rint", TOKEN_PRINT);
         case 'r': return checkKeyword(lexer, 1, 5, "eturn", TOKEN_RETURN);
         case 's':
             if (lexer->current - lexer->start > 1) {
