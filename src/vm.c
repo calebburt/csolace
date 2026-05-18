@@ -52,8 +52,11 @@ static void runtimeError(VM *vm, const char *format, ...) {
         ObjPrototype *function = frame->function;
         size_t instruction = frame->ip - function->chunk.code.data - 1;
         int line = getLine(&function->chunk, (int)instruction).line;
-        fprintf(stderr, "\033[33m at line %d\033 in %s\033[0m\n", line, function->name->chars);
-        fprintf(stderr, "%3.0d | %s \n", line, getLineOfString(vm->source, line));
+        const char *name = function->name != NULL ? function->name->chars : "<script>";
+        fprintf(stderr, "\033[33m at line %d in %s\033[0m\n", line, name);
+        char *src = getLineOfString(vm->source, line);
+        fprintf(stderr, "%3.0d | %s \n", line, src != NULL ? src : "");
+        free(src);
     }
 
     resetStack(vm);

@@ -331,12 +331,6 @@ static void markInitialized(Parser *parser) {
     compiler->locals[compiler->localCount - 1].depth = compiler->scopeDepth;
 }
 
-static uint8_t defineVariable(Parser *parser, Token name, Type type) {
-    declareVariable(parser, name, type);
-    markInitialized(parser);
-    return (uint8_t)(parser->currentCompiler->localCount - 1);
-}
-
 static int resolveLocal(Parser *parser, Token *name) {
     Compiler *compiler = parser->currentCompiler;
     for (int i = compiler->localCount - 1; i >= 0; i--) {
@@ -746,15 +740,24 @@ static Type whileExpr(Parser *parser, bool canAssign) {
 static Type funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
     Compiler *outer = parser->currentCompiler;
-    uint8_t slot = defineVariable(parser, parser->previous, NIL_TYPE);
+
+    // Locals live on the operand stack; the slot is *whatever position the
+    // next pushed value lands at*. So declare first (reserving the slot at the
+    // current stack top), then let function() push the prototype into it.
+    // function() itself patches our outer-local type before compiling the body
+    // so recursive references resolve to a proper Function type.
+    declareVariable(parser, parser->previous, errorType(parser->vm));
+    uint8_t slot = (uint8_t)(outer->localCount - 1);
 
     Type funcType = function(parser, TYPE_FUNCTION);
     outer->locals[slot].type = funcType;
+    markInitialized(parser);
 
-    emitBytes(parser, OP_SET_LOCAL, slot);
-    emitByte(parser, OP_POP);
-    emitByte(parser, OP_NIL);
-    return NIL_TYPE;
+    // The expression-statement loop emits OP_PRINT (or OP_POP) after us, which
+    // would consume the function value and leave the slot pointing at stale
+    // memory. Duplicate via OP_GET_LOCAL so the consumer eats the copy.
+    emitBytes(parser, OP_GET_LOCAL, slot);
+    return funcType;
 }
 
 
