@@ -815,7 +815,6 @@ ParseRule rules[] = {
     [TOKEN_NIL]           = {literal,  NULL,   PREC_NONE},
     [TOKEN_NOT]           = {unary,    NULL,   PREC_NONE},
     [TOKEN_OR]            = {or_,      NULL,   PREC_NONE},
-    [TOKEN_PRINT]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_RETURN]        = {retExpr,  NULL,   PREC_NONE},
     [TOKEN_SUPER]         = {NULL,     NULL,   PREC_NONE},
     [TOKEN_SELF]          = {NULL,     NULL,   PREC_NONE},

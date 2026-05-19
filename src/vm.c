@@ -71,6 +71,7 @@ static bool clockNative(VM *vm, int argCount, Value *args, Value *out) {
 
 static bool printNative(VM *vm, int argCount, Value *args, Value *out) {
     printValue(args[0]);
+    printf("\n");
     *out = NIL_VAL;
     return true;
 }
@@ -112,6 +113,10 @@ void defineNative(VM *vm, const char *name, NativeFn fn,
 
 void freeVM(VM *vm) {
     freeObjects(vm->objects);
+    // Free all the native types
+    for (int i = 0; i < vm->nativeCount; i++) {
+        freeType(vm, vm->nativeTypes[i]);
+    }
 }
 
 void push(VM *vm, Value value) {

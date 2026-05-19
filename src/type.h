@@ -22,6 +22,11 @@ Type tokenType(struct VM *vm, Token token);
 Type unionType(struct VM *vm, Type one, Type two);
 Type errorType(struct VM *vm);
 
+// Release the heap allocations owned by `t` (variant chain via `next` and the
+// slot/held-type chain via `generics`). The top-level Type is passed by value
+// and is not itself freed.
+void freeType(struct VM *vm, Type t);
+
 MAKE_DYNAMIC_ARRAY_H(Type, TypeArray)
 
 // Build a function type. Encoding: name="Function", `generics` points to a chain

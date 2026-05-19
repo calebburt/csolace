@@ -118,6 +118,26 @@ Type functionType(VM *vm, Type returnType, TypeArray *params) {
     return result;
 }
 
+void freeType(VM *vm, Type t) {
+    Type *slot = t.generics;
+    while (slot != NULL) {
+        Type *nextSlot = slot->next;
+        if (slot->generics != NULL) {
+            freeType(vm, *slot->generics);
+            FREE(Type, slot->generics);
+        }
+        FREE(Type, slot);
+        slot = nextSlot;
+    }
+
+    Type *variant = t.next;
+    while (variant != NULL) {
+        Type *nextVariant = variant->next;
+        FREE(Type, variant);
+        variant = nextVariant;
+    }
+}
+
 bool isFunctionType(Type t) {
     if (t.name == NULL) return false;
     if (t.name->length != 8) return false;
