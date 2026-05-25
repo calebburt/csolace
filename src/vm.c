@@ -6,6 +6,7 @@
 #include "debug.h"
 #include <stdarg.h>
 #include <time.h>
+#include <math.h>
 
 static void resetStack(VM *vm) {
     vm->stackTop = vm->stack;
@@ -76,6 +77,62 @@ static bool printNative(VM *vm, int argCount, Value *args, Value *out) {
     return true;
 }
 
+static bool inputNative(VM *vm, int argCount, Value *args, Value *out) {
+    (void)vm; (void)argCount; (void)args;
+    char buffer[1024];
+    if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+        *out = NIL_VAL;
+        return true;
+    }
+    size_t len = strlen(buffer);
+    if (len > 0 && buffer[len - 1] == '\n') {
+        buffer[len - 1] = '\0';
+        len--;
+    }
+    *out = OBJ_VAL(copyString(vm, buffer, len));
+    return true;
+}
+
+static bool sinNative(VM *vm, int argCount, Value *args, Value *out) {
+    (void)vm; (void)argCount;
+    if (!IS_NUMBER(args[0])) {
+        runtimeError(vm, "sin() expects a Number.");
+        return false;
+    }
+    *out = NUMBER_VAL(sin(AS_NUMBER(args[0])));
+    return true;
+}
+
+static bool cosNative(VM *vm, int argCount, Value *args, Value *out) {
+    (void)vm; (void)argCount;
+    if (!IS_NUMBER(args[0])) {
+        runtimeError(vm, "cos() expects a Number.");
+        return false;
+    }
+    *out = NUMBER_VAL(cos(AS_NUMBER(args[0])));
+    return true;
+}
+
+static bool sqrtNative(VM *vm, int argCount, Value *args, Value *out) {
+    (void)vm; (void)argCount;
+    if (!IS_NUMBER(args[0])) {
+        runtimeError(vm, "sqrt() expects a Number.");
+        return false;
+    }
+    *out = NUMBER_VAL(sqrt(AS_NUMBER(args[0])));
+    return true;
+}
+
+static bool absNative(VM *vm, int argCount, Value *args, Value *out) {
+    (void)vm; (void)argCount;
+    if (!IS_NUMBER(args[0])) {
+        runtimeError(vm, "abs() expects a Number.");
+        return false;
+    }
+    *out = NUMBER_VAL(fabs(AS_NUMBER(args[0])));
+    return true;
+}
+
 static void defineBuiltinNatives(VM *vm) {
     defineNative(vm, "clock", clockNative, type(vm, "Number"), NULL);
 
@@ -84,6 +141,18 @@ static void defineBuiltinNatives(VM *vm) {
     appendTypeArray(&printParams, type(vm, "Any"));
     defineNative(vm, "print", printNative, type(vm, "Nil"), &printParams);
     freeTypeArray(&printParams);
+
+    defineNative(vm, "input", inputNative, type(vm, "String"), NULL);
+
+    // math functions
+    TypeArray numParams;
+    initTypeArray(&numParams);
+    appendTypeArray(&numParams, type(vm, "Number"));
+    defineNative(vm, "sin", sinNative, type(vm, "Number"), &numParams);
+    defineNative(vm, "cos", cosNative, type(vm, "Number"), &numParams);
+    defineNative(vm, "sqrt", sqrtNative, type(vm, "Number"), &numParams);
+    defineNative(vm, "abs", absNative, type(vm, "Number"), &numParams);
+    freeTypeArray(&numParams);
 }
 
 void initVM(VM *vm) {

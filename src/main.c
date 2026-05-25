@@ -68,32 +68,6 @@ int main(int argc, char *argv[]) {
         exit(64);
     }
 
-    // Chunk chunk;
-    // initChunk(&chunk);
-
-    // int constant = addConstant(&chunk, 1.2);
-    // writeChunk(&chunk, OP_CONSTANT, 123);
-    // writeChunk(&chunk, constant, 123);
-
-    // constant = addConstant(&chunk, 3.4);
-    // writeChunk(&chunk, OP_CONSTANT, 123);
-    // writeChunk(&chunk, constant, 123);
-
-    // writeChunk(&chunk, OP_ADD, 123);
-
-    // constant = addConstant(&chunk, 5.6);
-    // writeChunk(&chunk, OP_CONSTANT, 123);
-    // writeChunk(&chunk, constant, 123);
-
-    // writeChunk(&chunk, OP_DIVIDE, 123);
-
-    // writeChunk(&chunk, OP_NEGATE, 123);
-
-    // writeChunk(&chunk, OP_RETURN, 123);
-
-    // interpret(&vm, &chunk);
-
-    // freeChunk(&chunk);
     freeVM(&vm);
     return 0;
 }
