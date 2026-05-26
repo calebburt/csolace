@@ -15,6 +15,9 @@ static void printFunction(ObjPrototype *function) {
 
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
+        case OBJ_FUNCTION:
+            printFunction(AS_FUNCTION(value)->prototype);
+            break;
         case OBJ_STRING:
             printf("%s", AS_CSTRING(value));
             break;
@@ -93,6 +96,12 @@ static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     return object;
 }
 
+ObjFunction *newFunction(VM *vm, ObjPrototype *prototype) {
+    ObjFunction *function = ALLOCATE_OBJ(vm, ObjFunction, OBJ_FUNCTION);
+    function->prototype = prototype;
+    return function;
+}
+
 ObjPrototype *newPrototype(VM *vm) {
     ObjPrototype *prototype = ALLOCATE_OBJ(vm, ObjPrototype, OBJ_PROTOTYPE);
     initTypeArray(&prototype->paramaters);
@@ -125,6 +134,10 @@ ObjString* copyString(VM *vm, const char *chars, int length) {
 
 void freeObject(Obj *object) {
     switch (object->type) {
+        case OBJ_FUNCTION: {
+            FREE(OBJ_FUNCTION, object);
+            break;
+        }
         case OBJ_STRING: {
             ObjString *string = (ObjString*)object;
             FREE_ARRAY(char, string->chars, string->length + 1);

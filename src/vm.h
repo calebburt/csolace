@@ -12,7 +12,7 @@
 #define NATIVES_MAX UINT8_COUNT
 
 typedef struct {
-    ObjPrototype *function;
+    ObjFunction *function;
     uint8_t *ip;
     Value *slots;
 } CallFrame;

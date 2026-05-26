@@ -295,10 +295,7 @@ static bool identifiersEqual(Token *a, Token *b) {
     return memcmp(a->start, b->start, a->length) == 0;
 }
 
-// Add a local with an "uninitialized" depth sentinel (-1). `markInitialized`
-// promotes it to the current scope depth once its initializer has run. This
-// lets `resolveLocal` distinguish "in scope" from "currently being initialized"
-// and flag `a = a` style self-references.
+// Add a local with an "uninitialized" depth sentinel (-1).
 static void addLocal(Parser *parser, Token name, Type type) {
     Compiler *compiler = parser->currentCompiler;
     if (compiler->localCount == UINT8_COUNT) {
@@ -312,9 +309,6 @@ static void addLocal(Parser *parser, Token name, Type type) {
     local->type = type;
 }
 
-// Reject redeclaration in the same scope; declarations in outer scopes are
-// allowed and shadowed. Scans newest-to-oldest and stops at the first local
-// whose depth is shallower than the current one.
 static void declareVariable(Parser *parser, Token name, Type type) {
     Compiler *compiler = parser->currentCompiler;
     for (int i = compiler->localCount - 1; i >= 0; i--) {
@@ -346,8 +340,6 @@ static int resolveLocal(Parser *parser, Token *name) {
     return -1;
 }
 
-// Linear scan over the VM's native table. Native names are `const char *` (no
-// length stored) so we compare against the token via strncmp + a strlen check.
 static int resolveNative(Parser *parser, Token *name) {
     VM *vm = parser->vm;
     for (int i = 0; i < vm->nativeCount; i++) {
@@ -565,7 +557,7 @@ static Type function(Parser *parser, FunctionType funType) {
     consume(parser, TOKEN_END, "Expect 'end' after function body.");
 
     ObjPrototype *functionObj = endCompiler(parser);
-    emitBytes(parser, OP_CONSTANT, makeConstant(parser, OBJ_VAL(functionObj)));
+    emitBytes(parser, OP_CLOSURE, makeConstant(parser, OBJ_VAL(functionObj)));
     return funcType;
 }
 

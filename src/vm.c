@@ -51,7 +51,7 @@ static void runtimeError(VM *vm, const char *format, ...) {
     
     for (int i = vm->frameCount - 1; i >= 0; i--) {
         CallFrame *frame = &vm->frames[i];
-        ObjPrototype *function = frame->function;
+        ObjPrototype *function = frame->function->prototype;
         size_t instruction = frame->ip - function->chunk.code.data - 1;
         int line = getLine(&function->chunk, (int)instruction).line;
         const char *name = function->name != NULL ? function->name->chars : "<script>";
@@ -202,9 +202,9 @@ static Value peek(VM *vm, int distance) {
     return vm->stackTop[-1 - distance];
 }
 
-static bool call(VM *vm, ObjPrototype *function, int argCount) {
-    if (argCount != function->paramaters.count) {
-        runtimeError(vm, "Expected %d arguments but got %d.", function->paramaters.count, argCount);
+static bool call(VM *vm, ObjFunction *function, int argCount) {
+    if (argCount != function->prototype->paramaters.count) {
+        runtimeError(vm, "Expected %d arguments but got %d.", function->prototype->paramaters.count, argCount);
         return false;
     }
 
@@ -215,7 +215,7 @@ static bool call(VM *vm, ObjPrototype *function, int argCount) {
 
     CallFrame *frame = &vm->frames[vm->frameCount++];
     frame->function = function;
-    frame->ip = function->chunk.code.data;
+    frame->ip = function->prototype->chunk.code.data;
     frame->slots = vm->stackTop - argCount - 1; // -1 for the callee
 
     return true;
@@ -224,8 +224,8 @@ static bool call(VM *vm, ObjPrototype *function, int argCount) {
 static bool callValue(VM *vm, Value callee, int argCount) {
     if (IS_OBJ(callee)) {
         switch (OBJ_TYPE(callee)) {
-            case OBJ_PROTOTYPE: {
-                return call(vm, AS_PROTOTYPE(callee), argCount);
+            case OBJ_FUNCTION: {
+                return call(vm, AS_FUNCTION(callee), argCount);
             }
             case OBJ_NATIVE: {
                 ObjNative *native = AS_NATIVE(callee);
@@ -250,7 +250,7 @@ static bool isFalsey(Value value) {
 static InterpretResult run(VM *vm) {
     CallFrame *frame = &vm->frames[vm->frameCount - 1];
 #define READ_BYTE() (*frame->ip++)
-#define READ_CONSTANT() (frame->function->chunk.constants.data[READ_BYTE()])
+#define READ_CONSTANT() (frame->function->prototype->chunk.constants.data[READ_BYTE()])
 #define READ_STRING() AS_STRING(READ_CONSTANT())
 #define READ_SHORT() ((frame->ip += 2, (uint16_t)((frame->ip[-2] << 8) | frame->ip[-1])))
 
@@ -275,7 +275,7 @@ static InterpretResult run(VM *vm) {
         }
         printf(" ]\n ");
 
-        disassembleInstruction(&frame->function->chunk, (int)(frame->ip - frame->function->chunk.code.data));
+        disassembleInstruction(&frame->function->prototype->chunk, (int)(frame->ip - frame->function->prototype->chunk.code.data));
 #endif
         uint8_t instruction;
         switch (instruction = READ_BYTE()) {
@@ -368,6 +368,12 @@ static InterpretResult run(VM *vm) {
                 frame = &vm->frames[vm->frameCount - 1];
                 break;
             }
+            case OP_CLOSURE: {
+                ObjPrototype *prototype = AS_PROTOTYPE(READ_CONSTANT());
+                ObjFunction *function = newFunction(vm, prototype);
+                push(vm, OBJ_VAL(function));
+                break;
+            }
             case OP_RETURN: {
                 Value result = pop(vm);
                 vm->frameCount--;
@@ -395,11 +401,14 @@ static InterpretResult run(VM *vm) {
 InterpretResult interpret(VM *vm, const char *source) {
     resetStack(vm);
 
-    ObjPrototype *function = compile(vm, source);
-    if (function == NULL) return INTERPRET_COMPILE_ERROR;
+    ObjPrototype *prototype = compile(vm, source);
+    if (prototype == NULL) return INTERPRET_COMPILE_ERROR;
 
     vm->source = (char*)source;
 
+    push(vm, OBJ_VAL(prototype));
+    ObjFunction *function = newFunction(vm, prototype);
+    pop(vm);
     push(vm, OBJ_VAL(function));
     call(vm, function, 0);
 
