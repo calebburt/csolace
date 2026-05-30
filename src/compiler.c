@@ -27,6 +27,12 @@ typedef struct {
     int depth;
 } Local;
 
+typedef struct {
+    uint8_t index;
+    bool isLocal;
+    Type type;
+} Upvalue;
+
 typedef enum {
     TYPE_FUNCTION,
     TYPE_SCRIPT
@@ -40,6 +46,8 @@ typedef struct Compiler {
     Local locals[UINT8_COUNT];
     int localCount;
     int scopeDepth;
+
+    Upvalue upvalues[UINT8_COUNT];
 } Compiler;
 
 typedef struct {
@@ -326,8 +334,7 @@ static void markInitialized(Parser *parser) {
     compiler->locals[compiler->localCount - 1].depth = compiler->scopeDepth;
 }
 
-static int resolveLocal(Parser *parser, Token *name) {
-    Compiler *compiler = parser->currentCompiler;
+static int resolveLocal(Parser *parser, Compiler *compiler, Token *name) {
     for (int i = compiler->localCount - 1; i >= 0; i--) {
         Local *local = &compiler->locals[i];
         if (identifiersEqual(name, &local->name)) {
@@ -337,6 +344,43 @@ static int resolveLocal(Parser *parser, Token *name) {
             return i;
         }
     }
+    return -1;
+}
+
+static int addUpvalue(Parser *parser, Compiler *compiler, uint8_t index, Type type, bool isLocal) {
+    int upvalueCount = compiler->function->upvalueCount;
+
+    for (int i = 0; i < upvalueCount; i++) {
+        Upvalue *upvalue = &compiler->upvalues[i];
+        if (upvalue->index == index && upvalue->isLocal == isLocal) {
+            return i;
+        }
+    }
+
+    if (upvalueCount == UINT8_COUNT) {
+        error(parser, "Too many closure variables in function.");
+        return 0;
+    }
+
+    compiler->upvalues[upvalueCount].index = index;
+    compiler->upvalues[upvalueCount].isLocal = isLocal;
+    compiler->upvalues[upvalueCount].type = type;
+    return compiler->function->upvalueCount++;
+}
+
+static int resolveUpvalue(Parser *parser, Compiler *compiler, Token *name) {
+    if (compiler->enclosing == NULL) return -1;
+
+    int local = resolveLocal(parser, compiler->enclosing, name);
+    if (local != -1) {
+        return addUpvalue(parser, compiler, (uint8_t)local, compiler->enclosing->locals[local].type, true);
+    }
+
+    int upvalue = resolveUpvalue(parser, compiler->enclosing, name);
+    if (upvalue != -1) {
+        return addUpvalue(parser, compiler, (uint8_t)upvalue, compiler->enclosing->upvalues[upvalue].type, false);
+    }
+
     return -1;
 }
 
@@ -460,7 +504,7 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
         return declaredType;
     }
 
-    int arg = resolveLocal(parser, &name);
+    int arg = resolveLocal(parser, parser->currentCompiler, &name);
 
     if (canAssign && match(parser, TOKEN_EQUAL)) {
         if (arg == -1) {
@@ -488,6 +532,9 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
     if (arg != -1) {
         emitBytes(parser, OP_GET_LOCAL, (uint8_t)arg);
         return compiler->locals[arg].type;
+    } else if ((arg = resolveUpvalue(parser, parser->currentCompiler, &name)) != -1) {
+        emitBytes(parser, OP_GET_UPVALUE, (uint8_t)arg);
+        return parser->currentCompiler->upvalues[arg].type;
     }
 
     int nativeIdx = resolveNative(parser, &name);
@@ -558,6 +605,10 @@ static Type function(Parser *parser, FunctionType funType) {
 
     ObjPrototype *functionObj = endCompiler(parser);
     emitBytes(parser, OP_CLOSURE, makeConstant(parser, OBJ_VAL(functionObj)));
+
+    for (int i = 0; i < functionObj->upvalueCount; i++) {
+        emitBytes(parser, compiler.upvalues[i].isLocal ? 1 : 0, compiler.upvalues[i].index);
+    }
     return funcType;
 }
 

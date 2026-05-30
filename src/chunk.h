@@ -14,6 +14,7 @@ typedef enum {
     OP_GET_LOCAL,
     OP_SET_LOCAL,
     OP_GET_NATIVE,
+    OP_GET_UPVALUE,
     OP_EQUAL,
     OP_GREATER,
     OP_LESS,
@@ -56,6 +57,7 @@ struct ObjPrototype {
     ObjString *name;
     TypeArray paramaters;
     Type returnType;
+    int upvalueCount;
 };
 
 void initChunk(Chunk *chunk);

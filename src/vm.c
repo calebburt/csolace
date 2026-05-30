@@ -33,7 +33,7 @@ char* getLineOfString(const char* str, int lineNo) {
     size_t len = end ? (size_t)(end - start) : strlen(start);
     
     // Allocate memory and copy the line
-    char* result = (char*)malloc(len + 1);
+    char* result = (char*)ALLOCATE(char, len + 1);
     if (result) {
         strncpy(result, start, len);
         result[len] = '\0';
@@ -58,7 +58,7 @@ static void runtimeError(VM *vm, const char *format, ...) {
         fprintf(stderr, "\033[33m at line %d in %s\033[0m\n", line, name);
         char *src = getLineOfString(vm->source, line);
         fprintf(stderr, "%3.0d | %s \n", line, src != NULL ? src : "");
-        free(src);
+        FREE(char*, src);
     }
 
     resetStack(vm);

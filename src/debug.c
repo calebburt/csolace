@@ -71,6 +71,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
         case OP_GET_LOCAL: return byteInstruction("OP_GET_LOCAL", chunk, offset);
         case OP_SET_LOCAL: return byteInstruction("OP_SET_LOCAL", chunk, offset);
         case OP_GET_NATIVE: return byteInstruction("OP_GET_NATIVE", chunk, offset);
+        case OP_GET_UPVALUE: return byteInstruction("OP_GET_UPVALUE", chunk, offset);
         case OP_EQUAL: return simpleInstruction("OP_EQUAL", offset);
         case OP_GREATER: return simpleInstruction("OP_GREATER", offset);
         case OP_LESS: return simpleInstruction("OP_LESS", offset);
@@ -93,6 +94,14 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             printf("%-16s %4d ", "OP_CLOSURE", constant);
             printValue(chunk->constants.data[constant]);
             printf("\n");
+
+            ObjPrototype *prototype = AS_PROTOTYPE(chunk->constants.data[constant]);
+            for (int j = 0; j < prototype->upvalueCount; j++) {
+                int isLocal = chunk->code.data[offset++];
+                int index = chunk->code.data[offset++];
+                printf("%04d    |                     %s %d\n", offset - 2, isLocal ? "local" : "upvalue", index);
+            }
+
             return offset;
         }
         default:

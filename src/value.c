@@ -106,6 +106,7 @@ ObjPrototype *newPrototype(VM *vm) {
     ObjPrototype *prototype = ALLOCATE_OBJ(vm, ObjPrototype, OBJ_PROTOTYPE);
     initTypeArray(&prototype->paramaters);
     prototype->name = NULL;
+    prototype->upvalueCount = 0;
     initChunk(&prototype->chunk);
     return prototype;
 }

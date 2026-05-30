@@ -99,7 +99,14 @@ static TokenType identifierType(Lexer *lexer) {
                 }
             }
             break;
-        case 'o': return checkKeyword(lexer, 1, 1, "r", TOKEN_OR);
+        case 'o':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'r': return TOKEN_OR;
+                    case 'u': return checkKeyword(lexer, 2, 3, "ter", TOKEN_OUTER);
+                }
+            }
+            break;
         case 'r': return checkKeyword(lexer, 1, 5, "eturn", TOKEN_RETURN);
         case 's':
             if (lexer->current - lexer->start > 1) {
