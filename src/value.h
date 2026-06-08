@@ -9,6 +9,7 @@ typedef struct VM VM;
 typedef enum {
     OBJ_FUNCTION,
     OBJ_STRING,
+    OBJ_UPVALUE,
     OBJ_NATIVE,
     OBJ_PROTOTYPE,
 } ObjType;
@@ -27,11 +28,6 @@ typedef struct ObjString {
 
 // ObjPrototype is defined in chunk.h (it embeds a Chunk by value).
 typedef struct ObjPrototype ObjPrototype;
-
-typedef struct {
-    Obj obj;
-    ObjPrototype *prototype;
-} ObjFunction;
 
 typedef enum {
     VAL_BOOL,
@@ -57,6 +53,20 @@ typedef struct ObjNative {
     NativeFn function;
     const char *name;
 } ObjNative;
+
+typedef struct ObjUpvalue {
+    Obj obj;
+    Value *location;
+    struct ObjUpvalue *next;
+    Value closed;
+} ObjUpvalue;
+
+typedef struct {
+    Obj obj;
+    ObjPrototype *prototype;
+    ObjUpvalue **upvalues;
+    int upvalueCount;
+} ObjFunction;
 
 static inline bool isObjType(Value value, ObjType type);
 
@@ -98,6 +108,7 @@ uint32_t hashValue(Value value);
 ObjFunction *newFunction(VM *vm, ObjPrototype *prototype);
 ObjPrototype *newPrototype(VM *vm);
 ObjString *copyString(VM *vm, const char *chars, int length);
+ObjUpvalue *newUpvalue(VM *vm, Value *slot);
 ObjString *allocateString(VM *vm, char *chars, int length);
 ObjNative *newNative(VM *vm, NativeFn function, const char *name);
 

@@ -11,6 +11,7 @@
 static void resetStack(VM *vm) {
     vm->stackTop = vm->stack;
     vm->frameCount = 0;
+    vm->openUpvalues = NULL;
 }
 
 char* getLineOfString(const char* str, int lineNo) {
@@ -123,16 +124,6 @@ static bool sqrtNative(VM *vm, int argCount, Value *args, Value *out) {
     return true;
 }
 
-static bool absNative(VM *vm, int argCount, Value *args, Value *out) {
-    (void)vm; (void)argCount;
-    if (!IS_NUMBER(args[0])) {
-        runtimeError(vm, "abs() expects a Number.");
-        return false;
-    }
-    *out = NUMBER_VAL(fabs(AS_NUMBER(args[0])));
-    return true;
-}
-
 static void defineBuiltinNatives(VM *vm) {
     defineNative(vm, "clock", clockNative, type(vm, "Number"), NULL);
 
@@ -144,14 +135,13 @@ static void defineBuiltinNatives(VM *vm) {
 
     defineNative(vm, "input", inputNative, type(vm, "String"), NULL);
 
-    // math functions
+    // Math functions
     TypeArray numParams;
     initTypeArray(&numParams);
     appendTypeArray(&numParams, type(vm, "Number"));
     defineNative(vm, "sin", sinNative, type(vm, "Number"), &numParams);
     defineNative(vm, "cos", cosNative, type(vm, "Number"), &numParams);
     defineNative(vm, "sqrt", sqrtNative, type(vm, "Number"), &numParams);
-    defineNative(vm, "abs", absNative, type(vm, "Number"), &numParams);
     freeTypeArray(&numParams);
 }
 
@@ -243,6 +233,40 @@ static bool callValue(VM *vm, Value callee, int argCount) {
     return false;
 }
 
+static ObjUpvalue *captureUpvalue(VM *vm, Value *local) {
+    ObjUpvalue *prevUpvalue = NULL;
+    ObjUpvalue *upvalue = vm->openUpvalues;
+
+    while (upvalue != NULL && upvalue->location > local) {
+        prevUpvalue = upvalue;
+        upvalue = upvalue->next;
+    }
+
+    if (upvalue != NULL && upvalue->location == local) {
+        return upvalue;
+    }
+
+    ObjUpvalue *createdUpvalue = newUpvalue(vm, local);
+    createdUpvalue->next = upvalue;
+
+    if (prevUpvalue == NULL) {
+        vm->openUpvalues = createdUpvalue;
+    } else {
+        prevUpvalue->next = createdUpvalue;
+    }
+
+    return createdUpvalue;
+}
+
+static void closeUpvalues(VM *vm, Value *last) {
+    while (vm->openUpvalues != NULL && vm->openUpvalues->location >= last) {
+        ObjUpvalue *upvalue = vm->openUpvalues;
+        upvalue->closed = *upvalue->location;
+        upvalue->location = &upvalue->closed;
+        vm->openUpvalues = upvalue->next;
+    }
+}
+
 static bool isFalsey(Value value) {
     return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
@@ -301,6 +325,16 @@ static InterpretResult run(VM *vm) {
             case OP_GET_NATIVE: {
                 uint8_t idx = READ_BYTE();
                 push(vm, OBJ_VAL(vm->natives[idx]));
+                break;
+            }
+            case OP_GET_UPVALUE: {
+                uint8_t slot = READ_BYTE();
+                push(vm, *frame->function->upvalues[slot]->location);
+                break;
+            }
+            case OP_CLOSE_UPVALUE: {
+                closeUpvalues(vm, vm->stackTop - 1);
+                pop(vm);
                 break;
             }
             case OP_EQUAL: {
@@ -372,10 +406,20 @@ static InterpretResult run(VM *vm) {
                 ObjPrototype *prototype = AS_PROTOTYPE(READ_CONSTANT());
                 ObjFunction *function = newFunction(vm, prototype);
                 push(vm, OBJ_VAL(function));
+                for (int i = 0; i< function->upvalueCount; i++) {
+                    uint8_t isLocal = READ_BYTE();
+                    uint8_t index = READ_BYTE();
+                    if (isLocal) {
+                        function->upvalues[i] = captureUpvalue(vm, frame->slots + index);
+                    } else {
+                        function->upvalues[i] = frame->function->upvalues[index];
+                    }
+                }
                 break;
             }
             case OP_RETURN: {
                 Value result = pop(vm);
+                closeUpvalues(vm, frame->slots);
                 vm->frameCount--;
                 if (vm->frameCount == 0) {
                     pop(vm); // pop the script function

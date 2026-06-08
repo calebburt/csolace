@@ -72,6 +72,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
         case OP_SET_LOCAL: return byteInstruction("OP_SET_LOCAL", chunk, offset);
         case OP_GET_NATIVE: return byteInstruction("OP_GET_NATIVE", chunk, offset);
         case OP_GET_UPVALUE: return byteInstruction("OP_GET_UPVALUE", chunk, offset);
+        case OP_CLOSE_UPVALUE: return simpleInstruction("OP_CLOSE_UPVALUE", offset);
         case OP_EQUAL: return simpleInstruction("OP_EQUAL", offset);
         case OP_GREATER: return simpleInstruction("OP_GREATER", offset);
         case OP_LESS: return simpleInstruction("OP_LESS", offset);

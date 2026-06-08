@@ -21,6 +21,9 @@ void printObject(Value value) {
         case OBJ_STRING:
             printf("%s", AS_CSTRING(value));
             break;
+        case OBJ_UPVALUE:
+            printf("<upvalue>");
+            break;
         case OBJ_NATIVE:
             printf("<Function %s>", AS_NATIVE(value)->name);
             break;
@@ -97,8 +100,15 @@ static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
 }
 
 ObjFunction *newFunction(VM *vm, ObjPrototype *prototype) {
+    ObjUpvalue **upvalues = ALLOCATE(ObjUpvalue*, prototype->upvalueCount);
+    for (int i = 0; i < prototype->upvalueCount; i++) {
+        upvalues[i] = NULL;
+    }
+
     ObjFunction *function = ALLOCATE_OBJ(vm, ObjFunction, OBJ_FUNCTION);
     function->prototype = prototype;
+    function->upvalues = upvalues;
+    function->upvalueCount = prototype->upvalueCount;
     return function;
 }
 
@@ -133,9 +143,19 @@ ObjString* copyString(VM *vm, const char *chars, int length) {
     return allocateString(vm, heapChars, length);
 }
 
+ObjUpvalue *newUpvalue(VM *vm, Value *slot) {
+    ObjUpvalue *upvalue = ALLOCATE_OBJ(vm, ObjUpvalue, OBJ_UPVALUE);
+    upvalue->closed = NIL_VAL;
+    upvalue->location = slot;
+    upvalue->next = NULL;
+    return upvalue;
+}
+
 void freeObject(Obj *object) {
     switch (object->type) {
         case OBJ_FUNCTION: {
+            ObjFunction *function = (ObjFunction*)object;
+            FREE_ARRAY(ObjUpvalue*, function->upvalues, function->upvalueCount);
             FREE(OBJ_FUNCTION, object);
             break;
         }
@@ -145,6 +165,9 @@ void freeObject(Obj *object) {
             FREE(ObjString, object);
             break;
         }
+        case OBJ_UPVALUE: 
+            FREE(ObjUpvalue, object);
+            break;
         case OBJ_NATIVE:
             FREE(ObjNative, object);
             break;

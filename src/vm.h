@@ -27,6 +27,7 @@ typedef struct VM {
     Value stack[STACK_MAX]; // will replace with dynamic array maybe
     Value *stackTop;
 
+    ObjUpvalue *openUpvalues;
     Obj *objects;
 
     // Natives have their own namespace addressed by OP_GET_NATIVE <idx>.

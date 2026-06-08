@@ -25,6 +25,7 @@ typedef struct {
     Token name;
     Type type;
     int depth;
+    bool isCaptured;
 } Local;
 
 typedef struct {
@@ -196,6 +197,7 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) 
 
     Local *local = &compiler->locals[compiler->localCount++];
     local->depth = 0;
+    local->isCaptured = false;
     local->name.start = "";
     local->name.length = 0;
 
@@ -241,18 +243,14 @@ static void beginScope(Parser *parser) {
 static void endScope(Parser *parser) {
     Compiler *c = parser->currentCompiler;
     c->scopeDepth--;
-    int popCount = 0;
     while (c->localCount > 0 &&
            c->locals[c->localCount - 1].depth > c->scopeDepth) {
-        popCount++;
-        c->localCount--;
-    }
-    if (popCount > 0) {
-        int firstSlot = c->localCount;
-        emitBytes(parser, OP_SET_LOCAL, (uint8_t)firstSlot);
-        for (int i = 0; i < popCount; i++) {
+        if (parser->currentCompiler->locals[parser->currentCompiler->localCount - 1].isCaptured) {
+            emitByte(parser, OP_CLOSE_UPVALUE);
+        } else {
             emitByte(parser, OP_POP);
         }
+        c->localCount--;
     }
 }
 
@@ -314,6 +312,7 @@ static void addLocal(Parser *parser, Token name, Type type) {
     Local *local = &compiler->locals[compiler->localCount++];
     local->name = name;
     local->depth = -1;
+    local->isCaptured = false;
     local->type = type;
 }
 
@@ -373,6 +372,7 @@ static int resolveUpvalue(Parser *parser, Compiler *compiler, Token *name) {
 
     int local = resolveLocal(parser, compiler->enclosing, name);
     if (local != -1) {
+        compiler->enclosing->locals[local].isCaptured = true;
         return addUpvalue(parser, compiler, (uint8_t)local, compiler->enclosing->locals[local].type, true);
     }
 
@@ -920,8 +920,14 @@ ObjPrototype *compile(VM *vm, const char *source) {
     
     advance(&parser);
     
+    // Top-level expressions, like function/if/while bodies, leave their value
+    // on the stack; declarations additionally emit a trailing OP_GET_LOCAL that
+    // duplicates the value for a consumer to pop. Without that pop here, every
+    // declaration leaks a copy onto the stack and the compiler's local-slot
+    // indices drift out of sync with the runtime stack positions.
     while (!match(&parser, TOKEN_EOF) && !parser.hadError) {
         expression(&parser);
+        emitByte(&parser, OP_POP);
     }
     
     ObjPrototype *function = endCompiler(&parser);
