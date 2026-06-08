@@ -332,6 +332,11 @@ static InterpretResult run(VM *vm) {
                 push(vm, *frame->function->upvalues[slot]->location);
                 break;
             }
+            case OP_SET_UPVALUE: {
+                uint8_t slot = READ_BYTE();
+                *frame->function->upvalues[slot]->location = peek(vm, 0);
+                break;
+            }
             case OP_CLOSE_UPVALUE: {
                 closeUpvalues(vm, vm->stackTop - 1);
                 pop(vm);

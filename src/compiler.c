@@ -234,12 +234,7 @@ static void beginScope(Parser *parser) {
     parser->currentCompiler->scopeDepth++;
 }
 
-// Closes the current scope. The body of an if/while is an expression whose
-// value sits on top of the stack; any locals declared inside that body live
-// on the stack just below the result. Without cleanup, each loop iteration
-// would leak its body-locals onto the stack, overflowing on the 50th-ish
-// iteration. Slide the result down into the first soon-to-be-popped slot,
-// then pop the now-redundant values above it.
+// Closes the current scope.
 static void endScope(Parser *parser) {
     Compiler *c = parser->currentCompiler;
     c->scopeDepth--;
@@ -551,6 +546,33 @@ static Type variable(Parser *parser, bool canAssign) {
     return namedVariable(parser, parser->previous, canAssign);
 }
 
+// `outer x = expr` assigns to the nearest variable named `x` in an enclosing
+// function scope (an upvalue), rather than implicitly declaring a new local the
+// way a bare `x = expr` would. This is Solace's analogue of Python's `nonlocal`:
+// it is the only path that writes through a captured upvalue. Errors if no such
+// outer variable exists. See memory note "upvalues-read-only-by-design".
+static Type outerVariable(Parser *parser, bool canAssign) {
+    consume(parser, TOKEN_IDENTIFIER, "Expect variable name after 'outer'.");
+    Token name = parser->previous;
+
+    int arg = resolveUpvalue(parser, parser->currentCompiler, &name);
+    if (arg == -1) {
+        error(parser, "No variable with this name in an outer scope.");
+        // Still consume the assignment so we don't cascade into bogus errors.
+        if (match(parser, TOKEN_EQUAL)) expression(parser);
+        return errorType(parser->vm);
+    }
+
+    consume(parser, TOKEN_EQUAL, "Expect '=' after 'outer' variable.");
+    Type valueType = expression(parser);
+    Type existingType = parser->currentCompiler->upvalues[arg].type;
+    if (!isSubtype(valueType, existingType)) {
+        typeMismatch(parser, existingType, valueType, "outer assignment");
+    }
+    emitBytes(parser, OP_SET_UPVALUE, (uint8_t)arg);
+    return existingType;
+}
+
 static Type function(Parser *parser, FunctionType funType) {
     Compiler compiler;
     initCompiler(&compiler, parser, funType);
@@ -828,43 +850,44 @@ static Type funExpr(Parser *parser, bool canAssign) {
 
 
 ParseRule rules[] = {
-    [TOKEN_LEFT_PAREN]    = {grouping, call,   PREC_CALL},
-    [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_COMMA]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_DOT]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_MINUS]         = {unary,    binary, PREC_TERM},
-    [TOKEN_PLUS]          = {NULL,     binary, PREC_TERM},
-    [TOKEN_SLASH]         = {NULL,     binary, PREC_FACTOR},
-    [TOKEN_STAR]          = {NULL,     binary, PREC_FACTOR},
-    [TOKEN_COLON]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_BANG_EQUAL]    = {NULL,     binary, PREC_EQUALITY},
-    [TOKEN_EQUAL]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_EQUAL_EQUAL]   = {NULL,     binary, PREC_EQUALITY},
-    [TOKEN_GREATER]       = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_GREATER_EQUAL] = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_LESS]          = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_LESS_EQUAL]    = {NULL,     binary, PREC_COMPARISON},
-    [TOKEN_IDENTIFIER]    = {variable, NULL,   PREC_NONE},
-    [TOKEN_STRING]        = {string,   NULL,   PREC_NONE},
-    [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
-    [TOKEN_AND]           = {and_,     NULL,   PREC_NONE},
-    [TOKEN_CLASS]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_ELSE]          = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_END]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_FALSE]         = {literal,  NULL,   PREC_NONE},
-    [TOKEN_FOR]           = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_DEF]           = {funExpr,  NULL,   PREC_NONE},
-    [TOKEN_IF]            = {ifExpr,   NULL,   PREC_NONE},
-    [TOKEN_NIL]           = {literal,  NULL,   PREC_NONE},
-    [TOKEN_NOT]           = {unary,    NULL,   PREC_NONE},
-    [TOKEN_OR]            = {or_,      NULL,   PREC_NONE},
-    [TOKEN_RETURN]        = {retExpr,  NULL,   PREC_NONE},
-    [TOKEN_SUPER]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_SELF]          = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_TRUE]          = {literal,  NULL,   PREC_NONE},
-    [TOKEN_WHILE]         = {whileExpr,NULL,   PREC_NONE},
-    [TOKEN_ERROR]         = {NULL,     NULL,   PREC_NONE},
-    [TOKEN_EOF]           = {NULL,     NULL,   PREC_NONE},
+    [TOKEN_LEFT_PAREN]    = {grouping,      call,   PREC_CALL},
+    [TOKEN_RIGHT_PAREN]   = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_COMMA]         = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_DOT]           = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_MINUS]         = {unary,         binary, PREC_TERM},
+    [TOKEN_PLUS]          = {NULL,          binary, PREC_TERM},
+    [TOKEN_SLASH]         = {NULL,          binary, PREC_FACTOR},
+    [TOKEN_STAR]          = {NULL,          binary, PREC_FACTOR},
+    [TOKEN_COLON]         = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_BANG_EQUAL]    = {NULL,          binary, PREC_EQUALITY},
+    [TOKEN_EQUAL]         = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_EQUAL_EQUAL]   = {NULL,          binary, PREC_EQUALITY},
+    [TOKEN_GREATER]       = {NULL,          binary, PREC_COMPARISON},
+    [TOKEN_GREATER_EQUAL] = {NULL,          binary, PREC_COMPARISON},
+    [TOKEN_LESS]          = {NULL,          binary, PREC_COMPARISON},
+    [TOKEN_LESS_EQUAL]    = {NULL,          binary, PREC_COMPARISON},
+    [TOKEN_IDENTIFIER]    = {variable,      NULL,   PREC_NONE},
+    [TOKEN_STRING]        = {string,        NULL,   PREC_NONE},
+    [TOKEN_NUMBER]        = {number,        NULL,   PREC_NONE},
+    [TOKEN_AND]           = {and_,          NULL,   PREC_NONE},
+    [TOKEN_CLASS]         = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_ELSE]          = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_END]           = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_FALSE]         = {literal,       NULL,   PREC_NONE},
+    [TOKEN_FOR]           = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_DEF]           = {funExpr,       NULL,   PREC_NONE},
+    [TOKEN_IF]            = {ifExpr,        NULL,   PREC_NONE},
+    [TOKEN_NIL]           = {literal,       NULL,   PREC_NONE},
+    [TOKEN_NOT]           = {unary,         NULL,   PREC_NONE},
+    [TOKEN_OR]            = {or_,           NULL,   PREC_NONE},
+    [TOKEN_OUTER]         = {outerVariable, NULL,   PREC_NONE},
+    [TOKEN_RETURN]        = {retExpr,       NULL,   PREC_NONE},
+    [TOKEN_SUPER]         = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_SELF]          = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_TRUE]          = {literal,       NULL,   PREC_NONE},
+    [TOKEN_WHILE]         = {whileExpr,     NULL,   PREC_NONE},
+    [TOKEN_ERROR]         = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_EOF]           = {NULL,          NULL,   PREC_NONE},
 };
 
 
