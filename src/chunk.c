@@ -10,23 +10,23 @@ void initChunk(Chunk *chunk) {
     initValueArray(&chunk->constants);
 }
 
-void freeChunk(Chunk *chunk) {
-    freeCode(&chunk->code);
-    freeLineInfoArray(&chunk->lines);
-    freeValueArray(&chunk->constants);
+void freeChunk(VM *vm, Chunk *chunk) {
+    freeCode(vm, &chunk->code);
+    freeLineInfoArray(vm, &chunk->lines);
+    freeValueArray(vm, &chunk->constants);
 }
 
-void writeChunk(Chunk *chunk, uint8_t byte, int line) {
-    appendCode(&chunk->code, byte);
+void writeChunk(VM *vm, Chunk *chunk, uint8_t byte, int line) {
+    appendCode(vm, &chunk->code, byte);
     if (chunk->lines.data == NULL || !(chunk->lines.data[chunk->lines.count-1].line == line)) {
-        appendLineInfoArray(&chunk->lines, (LineInfo){line, 1});
+        appendLineInfoArray(vm, &chunk->lines, (LineInfo){line, 1});
     } else {
         chunk->lines.data[chunk->lines.count-1].num++;
     }
 }
 
-int addConstant(Chunk *chunk, Value value) {
-    appendValueArray(&chunk->constants, value);
+int addConstant(VM *vm, Chunk *chunk, Value value) {
+    appendValueArray(vm, &chunk->constants, value);
     return chunk->constants.count - 1;
 }
 

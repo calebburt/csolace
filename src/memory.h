@@ -3,9 +3,18 @@
 
 #include "common.h"
 
-#define ALLOCATE(type, count) (type*)reallocate(NULL, 0, sizeof(type) * (count))
-#define FREE(type, pointer) reallocate(pointer, sizeof(type), 0)
+typedef struct VM VM;
+typedef struct Obj Obj;
+typedef struct Value Value;
 
-void *reallocate(void *pointer, size_t oldSize, size_t newSize);
+#define ALLOCATE(vm, type, count) (type*)reallocate(vm, NULL, 0, sizeof(type) * (count))
+#define FREE(vm, type, pointer) reallocate(vm, pointer, sizeof(type), 0)
+
+void *reallocate(VM *vm, void *pointer, size_t oldSize, size_t newSize);
+
+void markObject(VM *vm, Obj *object);
+void markValue(VM *vm, Value value);
+
+void collectGarbage(VM *vm);
 
 #endif

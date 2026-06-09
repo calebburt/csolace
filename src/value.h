@@ -17,6 +17,7 @@ typedef enum {
 typedef struct Obj { // fix forward declaration
     ObjType type;
     uint32_t hash;
+    bool isMarked;
     struct Obj *next;
 } Obj;
 
@@ -36,7 +37,7 @@ typedef enum {
     VAL_OBJ,
 } ValueType;
 
-typedef struct {
+typedef struct Value {
     ValueType type;
     union {
         bool boolean;
@@ -112,8 +113,8 @@ ObjUpvalue *newUpvalue(VM *vm, Value *slot);
 ObjString *allocateString(VM *vm, char *chars, int length);
 ObjNative *newNative(VM *vm, NativeFn function, const char *name);
 
-void freeObject(Obj *object);
-void freeObjects(Obj *objects);
+void freeObject(VM *vm, Obj *object);
+void freeObjects(VM *vm, Obj *objects);
 
 static inline bool isObjType(Value value, ObjType type) {
     return IS_OBJ(value) && AS_OBJ(value)->type == type;

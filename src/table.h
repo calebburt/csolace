@@ -15,8 +15,8 @@ MAKE_DYNAMIC_ARRAY_H(Entry, Table)
 #define TABLE_MAX_LOAD 0.75
 
 bool tableGet(Table *table, Value key, Value *value);
-bool tableSet(Table *table, Value key, Value value);
+bool tableSet(VM *vm, Table *table, Value key, Value value);
 bool tableDelete(Table *table, Value key);
-void tableAddAll(Table *from, Table *to);
+void tableAddAll(VM *vm, Table *from, Table *to);
 
 #endif

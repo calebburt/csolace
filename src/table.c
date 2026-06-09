@@ -21,8 +21,8 @@ static Entry *findEntry(Entry* entries, int capacity, Value key) {
     }
 }
 
-static void adjustCapacity(Table *table, int capacity) {
-    Entry *entries = ALLOCATE(Entry, capacity);
+static void adjustCapacity(VM *vm, Table *table, int capacity) {
+    Entry *entries = ALLOCATE(vm, Entry, capacity);
     for (int i = 0; i < capacity; i++) {
         entries[i].key.type = VAL_NIL;
         entries[i].value.type = VAL_NIL;
@@ -45,7 +45,7 @@ static void adjustCapacity(Table *table, int capacity) {
         table->count++;
     }
 
-    FREE_ARRAY(Entry, oldEntries, oldCapacity);
+    FREE_ARRAY(vm, Entry, oldEntries, oldCapacity);
 }
 
 bool tableGet(Table *table, Value key, Value *value) {
@@ -58,10 +58,10 @@ bool tableGet(Table *table, Value key, Value *value) {
     return true;
 }
 
-bool tableSet(Table *table, Value key, Value value) {
+bool tableSet(VM *vm, Table *table, Value key, Value value) {
     if (table->count + 1 > table->capacity * TABLE_MAX_LOAD) {
         int capacity = GROW_CAPACITY(table->capacity);
-        adjustCapacity(table, capacity);
+        adjustCapacity(vm, table, capacity);
     }
 
     Entry *entry = findEntry(table->data, table->capacity, key);
@@ -84,11 +84,11 @@ bool tableDelete(Table *table, Value key) {
     return true;
 }
 
-void tableAddAll(Table *from, Table *to) {
+void tableAddAll(VM *vm, Table *from, Table *to) {
     for (int i = 0; i < from->capacity; i++) {
         Entry *entry = &from->data[i];
         if (entry->key.type == VAL_NIL) continue;
 
-        tableSet(to, entry->key, entry->value);
+        tableSet(vm, to, entry->key, entry->value);
     }
 }

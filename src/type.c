@@ -65,7 +65,7 @@ Type unionType(VM *vm, Type one, Type two) {
     Type *src = one.next;
     while (src != NULL) {
         if (!containsVariant(result, *src)) {
-            Type *node = ALLOCATE(Type, 1);
+            Type *node = ALLOCATE(vm, Type, 1);
             *node = *src;
             node->next = NULL;
             tail->next = node;
@@ -76,7 +76,7 @@ Type unionType(VM *vm, Type one, Type two) {
 
     for (src = &two; src != NULL; src = src->next) {
         if (!containsVariant(result, *src)) {
-            Type *node = ALLOCATE(Type, 1);
+            Type *node = ALLOCATE(vm, Type, 1);
             *node = *src;
             node->next = NULL;
             tail->next = node;
@@ -91,11 +91,11 @@ Type errorType(VM *vm) {
     return type(vm, "_ErrorType");
 }
 
-static Type *makeSlot(Type held) {
-    Type *slot = ALLOCATE(Type, 1);
+static Type *makeSlot(VM *vm, Type held) {
+    Type *slot = ALLOCATE(vm, Type, 1);
     slot->name = NULL;
     slot->next = NULL;
-    Type *copy = ALLOCATE(Type, 1);
+    Type *copy = ALLOCATE(vm, Type, 1);
     *copy = held;
     slot->generics = copy;
     return slot;
@@ -106,12 +106,12 @@ Type functionType(VM *vm, Type returnType, TypeArray *params) {
     result.name = copyString(vm, "Function", 8);
     result.next = NULL;
 
-    Type *retSlot = makeSlot(returnType);
+    Type *retSlot = makeSlot(vm, returnType);
     result.generics = retSlot;
 
     Type *tail = retSlot;
     for (int i = 0; i < params->count; i++) {
-        Type *slot = makeSlot(params->data[i]);
+        Type *slot = makeSlot(vm, params->data[i]);
         tail->next = slot;
         tail = slot;
     }
@@ -124,16 +124,16 @@ void freeType(VM *vm, Type t) {
         Type *nextSlot = slot->next;
         if (slot->generics != NULL) {
             freeType(vm, *slot->generics);
-            FREE(Type, slot->generics);
+            FREE(vm, Type, slot->generics);
         }
-        FREE(Type, slot);
+        FREE(vm, Type, slot);
         slot = nextSlot;
     }
 
     Type *variant = t.next;
     while (variant != NULL) {
         Type *nextVariant = variant->next;
-        FREE(Type, variant);
+        FREE(vm, Type, variant);
         variant = nextVariant;
     }
 }

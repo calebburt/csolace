@@ -2,6 +2,7 @@
 #include "value.h"
 #include "vm.h"
 #include "memory.h"
+#include "debug.h"
 
 MAKE_DYNAMIC_ARRAY(Value, ValueArray)
 
@@ -90,17 +91,30 @@ uint32_t hashValue(Value value) {
 
 #define ALLOCATE_OBJ(vm, type, objectType) (type*)allocateObject(vm, sizeof(type), objectType)
 
+static const char *objTypeName(ObjType type) {
+    switch (type) {
+        case OBJ_FUNCTION: return "OBJ_FUNCTION";
+        case OBJ_STRING: return "OBJ_STRING";
+        case OBJ_UPVALUE: return "OBJ_UPVALUE";
+        case OBJ_NATIVE: return "OBJ_NATIVE";
+        case OBJ_PROTOTYPE: return "OBJ_PROTOTYPE";
+        default: return "OBJ_UNKNOWN";
+    }
+}
+
 static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
-    Obj *object = (Obj*)reallocate(NULL, 0, size);
+    Obj *object = (Obj*)reallocate(vm, NULL, 0, size);
     object->type = type;
     object->next = vm->objects;
     object->hash = 0;
+    object->isMarked = false;
     vm->objects = object;
+    debug("%p allocate %zu for %s\n", (void*)object, size, objTypeName(type));
     return object;
 }
 
 ObjFunction *newFunction(VM *vm, ObjPrototype *prototype) {
-    ObjUpvalue **upvalues = ALLOCATE(ObjUpvalue*, prototype->upvalueCount);
+    ObjUpvalue **upvalues = ALLOCATE(vm, ObjUpvalue*, prototype->upvalueCount);
     for (int i = 0; i < prototype->upvalueCount; i++) {
         upvalues[i] = NULL;
     }
@@ -137,7 +151,7 @@ ObjString *allocateString(VM *vm, char *chars, int length) {
 }
 
 ObjString* copyString(VM *vm, const char *chars, int length) {
-    char *heapChars = ALLOCATE(char, length + 1);
+    char *heapChars = ALLOCATE(vm, char, length + 1);
     memcpy(heapChars, chars, length);
     heapChars[length] = '\0';
     return allocateString(vm, heapChars, length);
@@ -151,41 +165,44 @@ ObjUpvalue *newUpvalue(VM *vm, Value *slot) {
     return upvalue;
 }
 
-void freeObject(Obj *object) {
+void freeObject(VM *vm, Obj *object) {
+    debug("%p free type %s\n", (void*)object, objTypeName(object->type));
     switch (object->type) {
         case OBJ_FUNCTION: {
             ObjFunction *function = (ObjFunction*)object;
-            FREE_ARRAY(ObjUpvalue*, function->upvalues, function->upvalueCount);
-            FREE(OBJ_FUNCTION, object);
+            FREE_ARRAY(vm, ObjUpvalue*, function->upvalues, function->upvalueCount);
+            FREE(vm, OBJ_FUNCTION, object);
             break;
         }
         case OBJ_STRING: {
             ObjString *string = (ObjString*)object;
-            FREE_ARRAY(char, string->chars, string->length + 1);
-            FREE(ObjString, object);
+            FREE_ARRAY(vm, char, string->chars, string->length + 1);
+            FREE(vm, ObjString, object);
             break;
         }
-        case OBJ_UPVALUE: 
-            FREE(ObjUpvalue, object);
+        case OBJ_UPVALUE:
+            FREE(vm, ObjUpvalue, object);
             break;
         case OBJ_NATIVE:
-            FREE(ObjNative, object);
+            FREE(vm, ObjNative, object);
             break;
         case OBJ_PROTOTYPE: {
             ObjPrototype *prototype = (ObjPrototype*)object;
-            freeChunk(&prototype->chunk);
-            freeTypeArray(&prototype->paramaters);
-            FREE(ObjPrototype, object);
+            freeChunk(vm, &prototype->chunk);
+            freeTypeArray(vm, &prototype->paramaters);
+            FREE(vm, ObjPrototype, object);
             break;
         }
     }
 }
 
-void freeObjects(Obj *objects) {
+void freeObjects(VM *vm, Obj *objects) {
     Obj *object = objects;
     while (object != NULL) {
         Obj *next = object->next;
-        freeObject(object);
+        freeObject(vm, object);
         object = next;
     }
+
+    free(vm->grayStack);
 }

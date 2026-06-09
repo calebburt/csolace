@@ -51,7 +51,7 @@ typedef struct Compiler {
     Upvalue upvalues[UINT8_COUNT];
 } Compiler;
 
-typedef struct {
+typedef struct Parser {
     Token current;
     Token previous;
     Lexer *lexer;
@@ -147,7 +147,7 @@ static bool match(Parser *parser, TokenType type) {
 
 
 static void emitByte(Parser *parser, uint8_t byte) {
-    writeChunk(currentChunk(parser), byte, parser->previous.line);
+    writeChunk(parser->vm, currentChunk(parser), byte, parser->previous.line);
 }
 
 static void emitBytes(Parser *parser, uint8_t byte1, uint8_t byte2) {
@@ -171,7 +171,7 @@ static int emitJump(Parser *parser, uint8_t instruction) {
 }
 
 static uint8_t makeConstant(Parser *parser, Value value) {
-    int constant = addConstant(currentChunk(parser), value);
+    int constant = addConstant(parser->vm, currentChunk(parser), value);
     if (constant > UINT8_MAX) {
         error(parser, "Too many constants in one chunk.");
         return 0;
@@ -599,7 +599,7 @@ static Type function(Parser *parser, FunctionType funType) {
             declareVariable(parser, paramName, paramType);
             markInitialized(parser);
 
-            appendTypeArray(&compiler.function->paramaters, paramType);
+            appendTypeArray(parser->vm, &compiler.function->paramaters, paramType);
         } while (match(parser, TOKEN_COMMA));
     }
     consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
@@ -927,6 +927,19 @@ static Type expression(Parser *parser) {
 }
 
 
+// Mark every prototype in the in-flight compiler chain so a GC triggered during
+// compilation doesn't collect functions that are still being built. No-op
+// outside compilation, when vm->parser is NULL.
+void markCompilerRoots(VM *vm) {
+    if (vm->parser == NULL) return;
+
+    for (Compiler *compiler = vm->parser->currentCompiler;
+         compiler != NULL;
+         compiler = compiler->enclosing) {
+        markObject(vm, (Obj*)compiler->function);
+    }
+}
+
 ObjPrototype *compile(VM *vm, const char *source) {
     Lexer lexer;
     initLexer(&lexer, source);
@@ -937,6 +950,7 @@ ObjPrototype *compile(VM *vm, const char *source) {
     parser.vm = vm;
     parser.prevType = errorType(vm);
     parser.currentCompiler = NULL;  // initCompiler reads this for `enclosing`
+    vm->parser = &parser;           // exposes the compiler chain to the GC
     Compiler compiler;
     initCompiler(&compiler, &parser, TYPE_SCRIPT);
     parser.currentCompiler = &compiler;
@@ -954,6 +968,8 @@ ObjPrototype *compile(VM *vm, const char *source) {
     }
     
     ObjPrototype *function = endCompiler(&parser);
+
+    vm->parser = NULL;
 
     #ifdef SLC_DEBUG
     if (!parser.hadError) {

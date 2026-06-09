@@ -14,7 +14,7 @@ static void resetStack(VM *vm) {
     vm->openUpvalues = NULL;
 }
 
-char* getLineOfString(const char* str, int lineNo) {
+char* getLineOfString(VM *vm, const char* str, int lineNo) {
     if (lineNo < 1) return NULL;
 
     const char* start = str;
@@ -34,7 +34,7 @@ char* getLineOfString(const char* str, int lineNo) {
     size_t len = end ? (size_t)(end - start) : strlen(start);
     
     // Allocate memory and copy the line
-    char* result = (char*)ALLOCATE(char, len + 1);
+    char* result = (char*)ALLOCATE(vm, char, len + 1);
     if (result) {
         strncpy(result, start, len);
         result[len] = '\0';
@@ -57,9 +57,9 @@ static void runtimeError(VM *vm, const char *format, ...) {
         int line = getLine(&function->chunk, (int)instruction).line;
         const char *name = function->name != NULL ? function->name->chars : "<script>";
         fprintf(stderr, "\033[33m at line %d in %s\033[0m\n", line, name);
-        char *src = getLineOfString(vm->source, line);
+        char *src = getLineOfString(vm, vm->source, line);
         fprintf(stderr, "%3.0d | %s \n", line, src != NULL ? src : "");
-        FREE(char*, src);
+        FREE(vm, char*, src);
     }
 
     resetStack(vm);
@@ -129,26 +129,30 @@ static void defineBuiltinNatives(VM *vm) {
 
     TypeArray printParams;
     initTypeArray(&printParams);
-    appendTypeArray(&printParams, type(vm, "Any"));
+    appendTypeArray(vm, &printParams, type(vm, "Any"));
     defineNative(vm, "print", printNative, type(vm, "Nil"), &printParams);
-    freeTypeArray(&printParams);
+    freeTypeArray(vm, &printParams);
 
     defineNative(vm, "input", inputNative, type(vm, "String"), NULL);
 
     // Math functions
     TypeArray numParams;
     initTypeArray(&numParams);
-    appendTypeArray(&numParams, type(vm, "Number"));
+    appendTypeArray(vm, &numParams, type(vm, "Number"));
     defineNative(vm, "sin", sinNative, type(vm, "Number"), &numParams);
     defineNative(vm, "cos", cosNative, type(vm, "Number"), &numParams);
     defineNative(vm, "sqrt", sqrtNative, type(vm, "Number"), &numParams);
-    freeTypeArray(&numParams);
+    freeTypeArray(vm, &numParams);
 }
 
 void initVM(VM *vm) {
     vm->chunk = NULL;
     vm->objects = NULL;
+    vm->parser = NULL;
     vm->nativeCount = 0;
+    vm->grayCount = 0;
+    vm->grayCapacity = 0;
+    vm->grayStack = NULL;
     resetStack(vm);
     defineBuiltinNatives(vm);
 }
@@ -167,11 +171,11 @@ void defineNative(VM *vm, const char *name, NativeFn fn,
     int idx = vm->nativeCount++;
     vm->natives[idx] = newNative(vm, fn, name);
     vm->nativeTypes[idx] = functionType(vm, returnType, params);
-    if (params == &empty) freeTypeArray(&empty);
+    if (params == &empty) freeTypeArray(vm, &empty);
 }
 
 void freeVM(VM *vm) {
-    freeObjects(vm->objects);
+    freeObjects(vm, vm->objects);
     // Free all the native types
     for (int i = 0; i < vm->nativeCount; i++) {
         freeType(vm, vm->nativeTypes[i]);
@@ -357,7 +361,7 @@ static InterpretResult run(VM *vm) {
                     ObjString *b = AS_STRING(pop(vm));
                     ObjString *a = AS_STRING(pop(vm));
                     int length = a->length + b->length;
-                    char *chars = ALLOCATE(char, length + 1);
+                    char *chars = ALLOCATE(vm, char, length + 1);
                     memcpy(chars, a->chars, a->length);
                     memcpy(chars + a->length, b->chars, b->length);
                     chars[length] = '\0';
