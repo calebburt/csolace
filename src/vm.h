@@ -39,6 +39,15 @@ typedef struct VM {
     int grayCapacity;
     Obj **grayStack;
 
+    // Heap size (in bytes) at which the next collection is triggered; grows by
+    // GC_HEAP_GROW_FACTOR after each collection.
+    size_t nextGC;
+    // Collection is only safe once execution begins. The type checker allocates
+    // ObjStrings that live solely as Type values on the C stack (unreachable by
+    // the collector), so GC must stay off during init and compilation. interpret()
+    // flips this true right before run(), when every live object is rooted.
+    bool canGC;
+
     // Non-NULL only while compile() is running; lets markCompilerRoots() walk
     // the in-flight compiler chain.
     Parser *parser;

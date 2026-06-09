@@ -5,14 +5,22 @@
 
 size_t bytesAllocated = 0;
 
+// How much the heap is allowed to grow between collections.
+#define GC_HEAP_GROW_FACTOR 2
+
 void *reallocate(VM *vm, void *pointer, size_t oldSize, size_t newSize) {
-    if (newSize > oldSize) {
+    bytesAllocated += newSize - oldSize;
+
+    // canGC stays false during init and compilation (see VM::canGC). Only growing
+    // allocations can push us over the threshold, so we never collect on a shrink.
+    if (newSize > oldSize && vm->canGC) {
         #ifdef SLC_DEBUG
             collectGarbage(vm);
         #endif
+        if (bytesAllocated > vm->nextGC) {
+            collectGarbage(vm);
+        }
     }
-
-    bytesAllocated += newSize - oldSize;
 
     if (newSize == 0) {
         free(pointer);
@@ -40,11 +48,10 @@ void markObject(VM *vm, Obj *object) {
     if (vm->grayCapacity < vm->grayCount + 1) {
         vm->grayCapacity = GROW_CAPACITY(vm->grayCapacity);
         vm->grayStack = (Obj**)realloc(vm->grayStack, sizeof(Obj*) * vm->grayCapacity);
+        if (vm->grayStack == NULL) exit(1);
     }
 
     vm->grayStack[vm->grayCount++] = object;
-
-    if (vm->grayStack == NULL) exit(1);
 }
 
 void markValue(VM *vm, Value value) {
@@ -140,10 +147,15 @@ static void sweep(VM *vm) {
 
 void collectGarbage(VM *vm) {
     debug("-- gc begin\n");
+    size_t before = bytesAllocated;
 
     markRoots(vm);
     traceReferences(vm);
     sweep(vm);
 
+    vm->nextGC = bytesAllocated * GC_HEAP_GROW_FACTOR;
+
     debug("-- gc end\n");
+    debug("   collected %zu bytes (from %zu to %zu) next at %zu\n",
+          before - bytesAllocated, before, bytesAllocated, vm->nextGC);
 }

@@ -153,6 +153,8 @@ void initVM(VM *vm) {
     vm->grayCount = 0;
     vm->grayCapacity = 0;
     vm->grayStack = NULL;
+    vm->nextGC = 1024 * 1024;
+    vm->canGC = false;
     resetStack(vm);
     defineBuiltinNatives(vm);
 }
@@ -168,8 +170,11 @@ void defineNative(VM *vm, const char *name, NativeFn fn,
         initTypeArray(&empty);
         params = &empty;
     }
-    int idx = vm->nativeCount++;
+    // Store and publish the native before building its type: functionType()
+    // allocates, and the native must already be a root if that triggers a GC.
+    int idx = vm->nativeCount;
     vm->natives[idx] = newNative(vm, fn, name);
+    vm->nativeCount++;
     vm->nativeTypes[idx] = functionType(vm, returnType, params);
     if (params == &empty) freeTypeArray(vm, &empty);
 }
@@ -358,14 +363,19 @@ static InterpretResult run(VM *vm) {
             case OP_LESS_EQUAL: BINARY_OP(vm, BOOL_VAL, <=); break;
             case OP_ADD: {
                 if (IS_STRING(peek(vm, 0)) && IS_STRING(peek(vm, 1))) {
-                    ObjString *b = AS_STRING(pop(vm));
-                    ObjString *a = AS_STRING(pop(vm));
+                    // Leave the operands on the stack while allocating so a GC
+                    // triggered mid-concatenation can't collect them.
+                    ObjString *b = AS_STRING(peek(vm, 0));
+                    ObjString *a = AS_STRING(peek(vm, 1));
                     int length = a->length + b->length;
                     char *chars = ALLOCATE(vm, char, length + 1);
                     memcpy(chars, a->chars, a->length);
                     memcpy(chars + a->length, b->chars, b->length);
                     chars[length] = '\0';
-                    push(vm, OBJ_VAL(allocateString(vm, chars, length)));
+                    ObjString *result = allocateString(vm, chars, length);
+                    pop(vm);
+                    pop(vm);
+                    push(vm, OBJ_VAL(result));
                 } else if (IS_NUMBER(peek(vm, 0)) && IS_NUMBER(peek(vm, 1))) {
                     double b = AS_NUMBER(pop(vm));
                     double a = AS_NUMBER(pop(vm));
@@ -453,6 +463,9 @@ static InterpretResult run(VM *vm) {
 
 InterpretResult interpret(VM *vm, const char *source) {
     resetStack(vm);
+    // Keep GC off through compilation; the type checker leaves transient
+    // ObjStrings unrooted on the C stack. Re-armed below, before execution.
+    vm->canGC = false;
 
     ObjPrototype *prototype = compile(vm, source);
     if (prototype == NULL) return INTERPRET_COMPILE_ERROR;
@@ -465,5 +478,6 @@ InterpretResult interpret(VM *vm, const char *source) {
     push(vm, OBJ_VAL(function));
     call(vm, function, 0);
 
+    vm->canGC = true;
     return run(vm);
 }
