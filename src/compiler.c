@@ -848,6 +848,21 @@ static Type funExpr(Parser *parser, bool canAssign) {
     return funcType;
 }
 
+static Type class(Parser *parser, bool canAssign) {
+    consume(parser, TOKEN_IDENTIFIER, "Expect class name.");
+    uint8_t nameConstant = makeConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start, parser->previous.length)));
+    declareVariable(parser, parser->previous, type(parser->vm, "Class"));
+    uint8_t slot = (uint8_t)(parser->currentCompiler->localCount - 1);
+
+    emitBytes(parser, OP_CLASS, nameConstant);
+    markInitialized(parser);
+
+    consume(parser, TOKEN_END, "Expect 'end' after class body.");
+
+    emitBytes(parser, OP_GET_LOCAL, slot);
+    return type(parser->vm, "Class");
+}
+
 
 ParseRule rules[] = {
     [TOKEN_LEFT_PAREN]    = {grouping,      call,   PREC_CALL},
@@ -870,7 +885,7 @@ ParseRule rules[] = {
     [TOKEN_STRING]        = {string,        NULL,   PREC_NONE},
     [TOKEN_NUMBER]        = {number,        NULL,   PREC_NONE},
     [TOKEN_AND]           = {and_,          NULL,   PREC_NONE},
-    [TOKEN_CLASS]         = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_CLASS]         = {class,         NULL,   PREC_NONE},
     [TOKEN_ELSE]          = {NULL,          NULL,   PREC_NONE},
     [TOKEN_END]           = {NULL,          NULL,   PREC_NONE},
     [TOKEN_FALSE]         = {literal,       NULL,   PREC_NONE},

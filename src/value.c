@@ -16,6 +16,10 @@ static void printFunction(ObjPrototype *function) {
 
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
+        case OBJ_CLASS: {
+            printf("<Class %s>", AS_CLASS(value)->name->chars);
+            break;
+        }
         case OBJ_FUNCTION:
             printFunction(AS_FUNCTION(value)->prototype);
             break;
@@ -113,6 +117,12 @@ static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     return object;
 }
 
+ObjClass *newClass(VM *vm, ObjString *name) {
+    ObjClass *class = ALLOCATE_OBJ(vm, ObjClass, OBJ_CLASS);
+    class->name = name;
+    return class;
+}
+
 ObjFunction *newFunction(VM *vm, ObjPrototype *prototype) {
     ObjUpvalue **upvalues = ALLOCATE(vm, ObjUpvalue*, prototype->upvalueCount);
     for (int i = 0; i < prototype->upvalueCount; i++) {
@@ -168,6 +178,10 @@ ObjUpvalue *newUpvalue(VM *vm, Value *slot) {
 void freeObject(VM *vm, Obj *object) {
     debug("%p free type %s\n", (void*)object, objTypeName(object->type));
     switch (object->type) {
+        case OBJ_CLASS: {
+            FREE(vm, ObjClass, object);
+            break;
+        }
         case OBJ_FUNCTION: {
             ObjFunction *function = (ObjFunction*)object;
             FREE_ARRAY(vm, ObjUpvalue*, function->upvalues, function->upvalueCount);

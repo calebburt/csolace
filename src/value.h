@@ -7,6 +7,7 @@
 typedef struct VM VM;
 
 typedef enum {
+    OBJ_CLASS,
     OBJ_FUNCTION,
     OBJ_STRING,
     OBJ_UPVALUE,
@@ -26,6 +27,11 @@ typedef struct ObjString {
     int length;
     char *chars;
 } ObjString;
+
+typedef struct {
+    Obj obj;
+    ObjString *name;
+} ObjClass;
 
 // ObjPrototype is defined in chunk.h (it embeds a Chunk by value).
 typedef struct ObjPrototype ObjPrototype;
@@ -88,11 +94,13 @@ static inline bool isObjType(Value value, ObjType type);
 
 #define OBJ_TYPE(value) (AS_OBJ(value)->type)
 
+#define IS_CLASS(value) isObjType(value, OBJ_CLASS)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_STRING(value) isObjType(value, OBJ_STRING)
 #define IS_PROTOTYPE(value) isObjType(value, OBJ_PROTOTYPE)
 #define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 
+#define AS_CLASS(value) ((ObjClass*)AS_OBJ(value))
 #define AS_FUNCTION(value) ((ObjFunction*)AS_OBJ(value))
 #define AS_STRING(value) ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value) (AS_STRING(value)->chars)
@@ -106,6 +114,7 @@ void printValue(Value value);
 bool valuesEqual(Value a, Value b);
 uint32_t hashValue(Value value);
 
+ObjClass *newClass(VM *vm, ObjString *name);
 ObjFunction *newFunction(VM *vm, ObjPrototype *prototype);
 ObjPrototype *newPrototype(VM *vm);
 ObjString *copyString(VM *vm, const char *chars, int length);
