@@ -2,8 +2,8 @@
 #include "debug.h"
 #include "value.h"
 
+#ifdef SLC_DEBUG
 void debug(const char* format, ...) {
-    #ifdef SLC_DEBUG
     va_list args;
 
     va_start(args, format);
@@ -12,8 +12,8 @@ void debug(const char* format, ...) {
     vprintf(format, args);
 
     va_end(args);
-    #endif
 }
+#endif
 
 void disassembleChunk(Chunk *chunk, const char *name) {
     printf("-- %s --\n", name);
