@@ -143,5 +143,13 @@ bool isFunctionType(Type t) {
     if (t.name->length != 8) return false;
     return memcmp(t.name->chars, "Function", 8) == 0;
 }
+bool isClassType(Type t) {
+    if (t.name == NULL) return false;
+    if (t.name->length != 5) return false;
+    return memcmp(t.name->chars, "Class", 5) == 0;
+}
+bool isCallableType(Type t) {
+    return isFunctionType(t) || isClassType(t);
+}
 
 MAKE_DYNAMIC_ARRAY(Type, TypeArray)

@@ -11,8 +11,7 @@ size_t bytesAllocated = 0;
 void *reallocate(VM *vm, void *pointer, size_t oldSize, size_t newSize) {
     bytesAllocated += newSize - oldSize;
 
-    // canGC stays false during init and compilation (see VM::canGC). Only growing
-    // allocations can push us over the threshold, so we never collect on a shrink.
+    // Only growing allocations can push us over the threshold, so we never collect on a shrink.
     if (newSize > oldSize && vm->canGC) {
         #ifdef SLC_DEBUG
             collectGarbage(vm);
@@ -58,6 +57,18 @@ void markValue(VM *vm, Value value) {
     if (IS_OBJ(value)) markObject(vm, AS_OBJ(value));
 }
 
+void markType(VM *vm, Type type) {
+    markObject(vm, (Obj*)type.name);
+
+    for (Type *slot = type.generics; slot != NULL; slot = slot->next) {
+        if (slot->generics != NULL) markType(vm, *slot->generics);
+    }
+
+    for (Type *variant = type.next; variant != NULL; variant = variant->next) {
+        markObject(vm, (Obj*)variant->name);
+    }
+}
+
 static void markArray(VM *vm, ValueArray *array) {
     for (int i = 0; i < array->count; i++) {
         markValue(vm, array->data[i]);
@@ -70,6 +81,8 @@ static void blackenObject(VM *vm, Obj *object) {
     printValue(OBJ_VAL(object));
     #endif
     debug("\n");
+
+    markObject(vm, object->class);
 
     switch (object->type) {
         case OBJ_NATIVE:
@@ -89,6 +102,13 @@ static void blackenObject(VM *vm, Obj *object) {
             markObject(vm, (Obj*)function->prototype);
             for (int i = 0; i < function->upvalueCount; i++) {
                 markObject(vm, (Obj*)function->upvalues[i]);
+            }
+            break;
+        }
+        case OBJ_INSTANCE: {
+            ObjInstance *instance = (ObjInstance*)object;
+            for (int i = 0; i < instance->fieldCount; i++) {
+                markValue(vm, instance->fields[i]);
             }
             break;
         }
@@ -116,6 +136,7 @@ static void markRoots(VM *vm) {
 
     for (int i = 0; i < vm->nativeCount; i++) {
         markObject(vm, (Obj*)vm->natives[i]);
+        markType(vm, vm->nativeTypes[i]);
     }
 
     markCompilerRoots(vm);

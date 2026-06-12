@@ -36,6 +36,8 @@ MAKE_DYNAMIC_ARRAY_H(Type, TypeArray)
 // Slots use `name==NULL` as a sentinel so they aren't confused with real types.
 Type functionType(struct VM *vm, Type returnType, TypeArray *params);
 
+bool isCallableType(Type t);
+bool isClassType(Type t);
 bool isFunctionType(Type t);
 
 #endif

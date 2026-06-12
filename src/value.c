@@ -29,6 +29,9 @@ void printObject(Value value) {
         case OBJ_UPVALUE:
             printf("<upvalue>");
             break;
+        case OBJ_INSTANCE:
+            printf("<%s>", GET_CLASS(value)->name->chars);
+            break;
         case OBJ_NATIVE:
             printf("<Function %s>", AS_NATIVE(value)->name);
             break;
@@ -112,6 +115,7 @@ static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     object->next = vm->objects;
     object->hash = 0;
     object->isMarked = false;
+    object->class = NULL;
     vm->objects = object;
     debug("%p allocate %zu for %s\n", (void*)object, size, objTypeName(type));
     return object;
@@ -175,6 +179,17 @@ ObjUpvalue *newUpvalue(VM *vm, Value *slot) {
     return upvalue;
 }
 
+ObjInstance *newInstance(VM *vm, ObjClass *class, int fieldCount) {
+    ObjInstance *instance = ALLOCATE_OBJ(vm, ObjInstance, OBJ_INSTANCE);
+    instance->obj.class = (Obj*)class;
+    instance->fieldCount = fieldCount;
+    instance->fields = ALLOCATE(vm, Value, fieldCount);
+    for (int i = 0; i < fieldCount; i++) {
+        instance->fields[i] = NIL_VAL;
+    }
+    return instance;
+}
+
 void freeObject(VM *vm, Obj *object) {
     debug("%p free type %s\n", (void*)object, objTypeName(object->type));
     switch (object->type) {
@@ -199,6 +214,10 @@ void freeObject(VM *vm, Obj *object) {
             break;
         case OBJ_NATIVE:
             FREE(vm, ObjNative, object);
+            break;
+        case OBJ_INSTANCE:
+            reallocate(vm, ((ObjInstance*)object)->fields, sizeof(Value)*((ObjInstance*)object)->fieldCount, 0);
+            FREE(vm, ObjInstance, object);
             break;
         case OBJ_PROTOTYPE: {
             ObjPrototype *prototype = (ObjPrototype*)object;

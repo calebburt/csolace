@@ -234,6 +234,11 @@ static bool callValue(VM *vm, Value callee, int argCount) {
                 push(vm, result);
                 return succeeded;
             }
+            case OBJ_CLASS: {
+                ObjClass* class = AS_CLASS(callee);
+                vm->stackTop[-argCount - 1] = OBJ_VAL(newInstance(vm, class, 0));
+                return true;
+            }
             default:
                 break; // Non-callable object type
         }

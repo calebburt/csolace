@@ -11,14 +11,18 @@ typedef enum {
     OBJ_FUNCTION,
     OBJ_STRING,
     OBJ_UPVALUE,
+    OBJ_INSTANCE,
     OBJ_NATIVE,
     OBJ_PROTOTYPE,
 } ObjType;
 
 typedef struct Obj { // fix forward declaration
-    ObjType type;
+    // type needs only 3 bits and isMarked 1; packing them into one 4-byte word
+    // byte would force 7 bytes of padding before the pointers, pushing it to 32.
+    ObjType type : 8;
+    bool isMarked : 1;
     uint32_t hash;
-    bool isMarked;
+    struct Obj *class;
     struct Obj *next;
 } Obj;
 
@@ -32,6 +36,12 @@ typedef struct {
     Obj obj;
     ObjString *name;
 } ObjClass;
+
+typedef struct {
+    Obj obj;
+    int fieldCount;
+    Value *fields;
+} ObjInstance;
 
 // ObjPrototype is defined in chunk.h (it embeds a Chunk by value).
 typedef struct ObjPrototype ObjPrototype;
@@ -98,6 +108,7 @@ static inline bool isObjType(Value value, ObjType type);
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_STRING(value) isObjType(value, OBJ_STRING)
 #define IS_PROTOTYPE(value) isObjType(value, OBJ_PROTOTYPE)
+#define IS_INSTANCE(value) isObjType(value, OBJ_INSTANCE)
 #define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 
 #define AS_CLASS(value) ((ObjClass*)AS_OBJ(value))
@@ -105,7 +116,10 @@ static inline bool isObjType(Value value, ObjType type);
 #define AS_STRING(value) ((ObjString*)AS_OBJ(value))
 #define AS_CSTRING(value) (AS_STRING(value)->chars)
 #define AS_PROTOTYPE(value) ((ObjPrototype*)AS_OBJ(value))
+#define AS_INSTANCE(value) ((ObjInstance*)AS_OBJ(value))
 #define AS_NATIVE(value) ((ObjNative*)AS_OBJ(value))
+
+#define GET_CLASS(value) ((ObjClass*)AS_OBJ(value)->class)
 
 
 MAKE_DYNAMIC_ARRAY_H(Value, ValueArray)
@@ -120,6 +134,7 @@ ObjPrototype *newPrototype(VM *vm);
 ObjString *copyString(VM *vm, const char *chars, int length);
 ObjUpvalue *newUpvalue(VM *vm, Value *slot);
 ObjString *allocateString(VM *vm, char *chars, int length);
+ObjInstance *newInstance(VM *vm, ObjClass *class, int fieldCount);
 ObjNative *newNative(VM *vm, NativeFn function, const char *name);
 
 void freeObject(VM *vm, Obj *object);

@@ -707,14 +707,16 @@ static Type call(Parser *parser, bool canAssign) {
 
     Type *retSlot = NULL;
     Type *firstParamSlot = NULL;
-    bool fnTyped = isFunctionType(calleeType);
-    if (fnTyped && calleeType.generics != NULL) {
-        retSlot = calleeType.generics;
-        firstParamSlot = retSlot->next;
+    bool fnTyped = isCallableType(calleeType);
+    if (fnTyped) {
+        if (calleeType.generics != NULL) {
+            retSlot = calleeType.generics;
+            firstParamSlot = retSlot->next;
+        }
     } else if (!isErrorType(parser, calleeType)) {
         char buf[128], msg[256];
         formatType(calleeType, buf, sizeof(buf));
-        snprintf(msg, sizeof(msg), "expected function, got %s", buf);
+        snprintf(msg, sizeof(msg), "expected callable type, got %s", buf);
         typeError(parser, msg);
     }
 
