@@ -107,6 +107,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return offset;
         }
         case OP_CLASS: return constantInstruction("OP_CLASS", chunk, offset);
+        case OP_HALT: return simpleInstruction("OP_HALT", offset);
         default:
             printf("Unknown Opcode %d\n", instruction);
             return offset + 1;

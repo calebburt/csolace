@@ -441,6 +441,11 @@ static InterpretResult run(VM *vm) {
                 }
                 break;
             }
+            case OP_HALT:
+                // REPL pause: leave the stack exactly as-is (top-level locals
+                // and the function in slot 0 stay live) so the next line can
+                // resume against them. No frame teardown, no stack unwind.
+                return INTERPRET_OK;
             case OP_RETURN: {
                 Value result = pop(vm);
                 closeUpvalues(vm, frame->slots);
@@ -489,4 +494,46 @@ InterpretResult interpret(VM *vm, const char *source) {
 
     vm->canGC = true;
     return run(vm);
+}
+
+// Compile and run a single REPL line against a persistent top-level scope.
+// Unlike interpret(), this does NOT reset the stack: locals declared on earlier
+// lines stay on the operand stack and remain addressable. compileRepl() reuses
+// one long-lived compiler (so name/type resolution sees prior locals) and tells
+// us, via baseSlots, how many slots are already live — that's where the new
+// line's function object goes (slot 0) and where the stack top must sit before
+// execution resumes. The line's chunk ends in OP_HALT, which returns here
+// without unwinding, leaving any newly declared locals on the stack for next
+// time.
+InterpretResult interpretRepl(VM *vm, const char *source) {
+    vm->canGC = false;
+
+    int baseSlots = 0;
+    ObjFunction *function = compileRepl(vm, source, &baseSlots);
+    if (function == NULL) return INTERPRET_COMPILE_ERROR;
+
+    vm->source = (char*)source;
+
+    // Slot 0 holds the function; slots 1..baseSlots-1 hold locals carried over
+    // from previous lines (untouched since the last OP_HALT).
+    vm->stack[0] = OBJ_VAL(function);
+    vm->stackTop = vm->stack + baseSlots;
+
+    CallFrame *frame = &vm->frames[0];
+    frame->function = function;
+    frame->ip = function->prototype->chunk.code.data;
+    frame->slots = vm->stack;
+    vm->frameCount = 1;
+
+    vm->canGC = true;
+    InterpretResult result = run(vm);
+
+    if (result != INTERPRET_OK) {
+        // A runtime error leaves the stack in an indeterminate shape; drop the
+        // whole session so the next line starts from a clean top-level scope
+        // rather than reading stale or partial locals.
+        resetRepl();
+        resetStack(vm);
+    }
+    return result;
 }

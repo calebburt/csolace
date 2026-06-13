@@ -72,6 +72,7 @@ void initVM(VM *vm);
 void freeVM(VM *vm);
 
 InterpretResult interpret(VM *vm, const char *source);
+InterpretResult interpretRepl(VM *vm, const char *source);
 
 void push(VM *vm, Value value);
 Value pop(VM *vm);

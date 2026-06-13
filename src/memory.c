@@ -140,6 +140,7 @@ static void markRoots(VM *vm) {
     }
 
     markCompilerRoots(vm);
+    markReplRoots(vm);
 }
 
 static void traceReferences(VM *vm) {

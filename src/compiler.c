@@ -1,6 +1,7 @@
 #include "common.h"
 #include "compiler.h"
 #include "lexer.h"
+#include "memory.h"
 #include "type.h"
 #include "vm.h"
 #ifdef SLC_DEBUG
@@ -200,6 +201,8 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) 
     local->isCaptured = false;
     local->name.start = "";
     local->name.length = 0;
+    // Give the reserved slot a real type so markReplRoots can mark it safely;
+    local->type = errorType(parser->vm);
 
     if (type != TYPE_SCRIPT) {
         local->name = parser->previous;
@@ -957,6 +960,49 @@ void markCompilerRoots(VM *vm) {
     }
 }
 
+// The REPL's top-level scope persists across lines so locals carry over. Its
+// locals reference type-name ObjStrings that are otherwise unrooted, so the GC
+// must reach them through markReplRoots while a session is live.
+static Compiler replCompiler;
+static bool replInitialized = false;
+
+// A local's name is a Token pointing into the source text it was lexed from.
+// Across REPL lines that source (main's line buffer) is overwritten, so every
+// line's text is retained here for the life of the session — otherwise a
+// carried-over local's name would resolve against stale memory.
+static char **replSources = NULL;
+static int replSourceCount = 0;
+static int replSourceCap = 0;
+
+static char *replRetainSource(const char *source) {
+    if (replSourceCount == replSourceCap) {
+        replSourceCap = replSourceCap < 8 ? 8 : replSourceCap * 2;
+        replSources = realloc(replSources, sizeof(char*) * replSourceCap);
+    }
+    size_t size = strlen(source) + 1;
+    char *copy = malloc(size);
+    memcpy(copy, source, size);
+    replSources[replSourceCount++] = copy;
+    return copy;
+}
+
+void markReplRoots(VM *vm) {
+    if (!replInitialized) return;
+    markObject(vm, (Obj*)replCompiler.function);
+    for (int i = 0; i < replCompiler.localCount; i++) {
+        markType(vm, replCompiler.locals[i].type);
+    }
+}
+
+void resetRepl(void) {
+    replInitialized = false;
+    for (int i = 0; i < replSourceCount; i++) free(replSources[i]);
+    free(replSources);
+    replSources = NULL;
+    replSourceCount = 0;
+    replSourceCap = 0;
+}
+
 ObjPrototype *compile(VM *vm, const char *source) {
     Lexer lexer;
     initLexer(&lexer, source);
@@ -998,4 +1044,65 @@ ObjPrototype *compile(VM *vm, const char *source) {
     #endif
 
     return parser.hadError ? NULL : function;
+}
+
+ObjFunction *compileRepl(VM *vm, const char *source, int *baseSlots) {
+    // Retain a stable copy: locals declared this line keep name Tokens that
+    // point into it, and they must stay valid for every later line.
+    source = replRetainSource(source);
+
+    Lexer lexer;
+    initLexer(&lexer, source);
+    Parser parser;
+    parser.lexer = &lexer;
+    parser.hadError = false;
+    parser.panicMode = false;
+    parser.vm = vm;
+    parser.prevType = errorType(vm);
+    parser.currentCompiler = replInitialized ? &replCompiler : NULL;
+    vm->parser = &parser;
+
+    if (!replInitialized) {
+        initCompiler(&replCompiler, &parser, TYPE_SCRIPT);
+        replInitialized = true;
+    } else {
+        // Keep locals and localCount from prior lines; emit this line into a
+        // fresh chunk and reset the transient per-line state.
+        replCompiler.function = newPrototype(vm);
+        replCompiler.scopeDepth = 0;
+    }
+    parser.currentCompiler = &replCompiler;
+
+    // Slots already live before this line — slot 0 plus carried-over locals.
+    // The new line's bytecode resumes execution against this stack shape.
+    int savedLocalCount = replCompiler.localCount;
+    *baseSlots = savedLocalCount;
+
+    advance(&parser);
+    while (!match(&parser, TOKEN_EOF) && !parser.hadError) {
+        expression(&parser);
+        emitByte(&parser, OP_POP);
+    }
+    // Pause rather than return: OP_HALT stops the VM without unwinding, leaving
+    // any locals this line declared on the stack for the next line.
+    emitByte(&parser, OP_HALT);
+
+    ObjPrototype *prototype = replCompiler.function;
+    vm->parser = NULL;
+
+    if (parser.hadError) {
+        // We never ran, so the runtime stack is untouched; roll the persistent
+        // scope back to match it by dropping locals this line half-declared.
+        replCompiler.localCount = savedLocalCount;
+        return NULL;
+    }
+
+    #ifdef SLC_DEBUG
+    disassembleChunk(&prototype->chunk, "<repl>");
+    #endif
+
+    push(vm, OBJ_VAL(prototype));
+    ObjFunction *function = newFunction(vm, prototype);
+    pop(vm);
+    return function;
 }

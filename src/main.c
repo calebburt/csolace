@@ -14,7 +14,7 @@ static void repl(VM *vm) {
             break;
         }
 
-        interpret(vm, line);
+        interpretRepl(vm, line);
     }
 }
 
