@@ -1,9 +1,10 @@
 {
-    "makefile.launchConfigurations": [
-        {
-            "cwd": "/home/akash/projects/csolace",
-            "binaryPath": "/home/akash/projects/csolace/solace",
-            "binaryArgs": []
-        }
-    ]
+  "makefile.launchConfigurations": [
+    {
+      "cwd": "/home/akash/projects/csolace",
+      "binaryPath": "/home/akash/projects/csolace/solace",
+      "binaryArgs": []
+    }
+  ],
+  "C_Cpp_Runner.msvcBatchPath": ""
 }

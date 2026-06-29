@@ -24,7 +24,7 @@ typedef enum {
 
 typedef struct {
     Token name;
-    Type type;
+    Type *type;
     int depth;
     bool isCaptured;
 } Local;
@@ -32,13 +32,27 @@ typedef struct {
 typedef struct {
     uint8_t index;
     bool isLocal;
-    Type type;
+    Type *type;
 } Upvalue;
+
+typedef struct {
+    ObjString *name;
+    uint8_t index;
+    Type *type;
+} Field;
+
+typedef struct { // Name fields so dynamic array can be swapped in easily.
+    Field data[UINT8_COUNT];
+    int count;
+} FieldList;
 
 typedef enum {
     TYPE_FUNCTION,
     TYPE_SCRIPT
 } FunctionType;
+
+MAKE_TABLE_H(TypeTable, TypeTableEntry, Type*, FieldList, hashType, typesEqual)
+MAKE_TABLE(TypeTable, TypeTableEntry, Type*, FieldList, hashType, typesEqual)
 
 typedef struct Compiler {
     struct Compiler *enclosing;
@@ -50,28 +64,35 @@ typedef struct Compiler {
     int scopeDepth;
 
     Upvalue upvalues[UINT8_COUNT];
+
+    TypeTable types;
 } Compiler;
+
+typedef struct ClassCompiler {
+    struct ClassCompiler *enclosing;
+    FieldList fields;
+} ClassCompiler;
 
 typedef struct Parser {
     Token current;
     Token previous;
     Lexer *lexer;
     Compiler *currentCompiler;
+    ClassCompiler *currentClass;
     Chunk *compilingChunk;
     VM *vm;
-    Type prevType;
+    Type *prevType;
     bool hadError;
     bool panicMode;
 } Parser;
 
-typedef Type (*ParseFn)(Parser* parser, bool canAssign);
+typedef Type *(*ParseFn)(Parser* parser, bool canAssign);
 
 typedef struct {
     ParseFn prefix;
     ParseFn infix;
     Prescedence prescedence;
 } ParseRule;
-
 
 static Chunk *currentChunk(Parser *parser) {
     return &parser->currentCompiler->function->chunk;
@@ -191,6 +212,7 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) 
     compiler->type = type;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
+    initTypeTable(&compiler->types);
 
     if (type != TYPE_SCRIPT) {
         compiler->function->name = copyString(parser->vm, parser->previous.start, parser->previous.length);
@@ -253,21 +275,21 @@ static void endScope(Parser *parser) {
 }
 
 
-static Type expression(Parser *parser);
+static Type *expression(Parser *parser);
 static ParseRule *getRule(TokenType type);
-static Type parsePrescedence(Parser *parser, Prescedence prescedence);
+static Type *parsePrescedence(Parser *parser, Prescedence prescedence);
 
-static bool isErrorType(Parser *parser, Type t) {
+static bool isErrorType(Parser *parser, Type *t) {
     return typesEqual(t, errorType(parser->vm));
 }
 
 // Writes a human-readable rendering of `t` into buf, joining variants with " | ".
 // Returns the number of bytes written (excluding terminator), clamped to bufSize.
-static int formatType(Type t, char *buf, int bufSize) {
+static int formatType(Type *t, char *buf, int bufSize) {
     int written = 0;
-    for (Type *cur = &t; cur != NULL && written < bufSize - 1; cur = cur->next) {
+    for (Type *cur = t; cur != NULL && written < bufSize - 1; cur = cur->next) {
         const char *name = cur->name == NULL ? "<unknown>" : cur->name->chars;
-        const char *sep = (cur == &t) ? "" : " | ";
+        const char *sep = (cur == t) ? "" : " | ";
         int n = snprintf(buf + written, bufSize - written, "%s%s", sep, name);
         if (n < 0) break;
         written += n;
@@ -275,7 +297,7 @@ static int formatType(Type t, char *buf, int bufSize) {
     return written;
 }
 
-static void typeMismatch(Parser *parser, Type expected, Type actual, const char *context) {
+static void typeMismatch(Parser *parser, Type *expected, Type *actual, const char *context) {
     if (isErrorType(parser, expected) || isErrorType(parser, actual)) return;
     char expectedBuf[128], actualBuf[128], msg[384];
     formatType(expected, expectedBuf, sizeof(expectedBuf));
@@ -285,9 +307,9 @@ static void typeMismatch(Parser *parser, Type expected, Type actual, const char 
     typeError(parser, msg);
 }
 
-static void expectNumber(Parser *parser, Type actual, const char *context) {
+static void expectNumber(Parser *parser, Type *actual, const char *context) {
     if (isErrorType(parser, actual)) return;
-    Type numberT = type(parser->vm, "Number");
+    Type *numberT = type(parser->vm, "Number");
     if (!typesEqual(actual, numberT)) {
         typeMismatch(parser, numberT, actual, context);
     }
@@ -300,7 +322,7 @@ static bool identifiersEqual(Token *a, Token *b) {
 }
 
 // Add a local with an "uninitialized" depth sentinel (-1).
-static void addLocal(Parser *parser, Token name, Type type) {
+static void addLocal(Parser *parser, Token name, Type *type) {
     Compiler *compiler = parser->currentCompiler;
     if (compiler->localCount == UINT8_COUNT) {
         error(parser, "Too many local variables in function.");
@@ -314,7 +336,7 @@ static void addLocal(Parser *parser, Token name, Type type) {
     local->type = type;
 }
 
-static void declareVariable(Parser *parser, Token name, Type type) {
+static void declareVariable(Parser *parser, Token name, Type *type) {
     Compiler *compiler = parser->currentCompiler;
     for (int i = compiler->localCount - 1; i >= 0; i--) {
         Local *local = &compiler->locals[i];
@@ -344,7 +366,7 @@ static int resolveLocal(Parser *parser, Compiler *compiler, Token *name) {
     return -1;
 }
 
-static int addUpvalue(Parser *parser, Compiler *compiler, uint8_t index, Type type, bool isLocal) {
+static int addUpvalue(Parser *parser, Compiler *compiler, uint8_t index, Type *type, bool isLocal) {
     int upvalueCount = compiler->function->upvalueCount;
 
     for (int i = 0; i < upvalueCount; i++) {
@@ -394,15 +416,15 @@ static int resolveNative(Parser *parser, Token *name) {
     return -1;
 }
 
-static Type binary(Parser *parser, bool canAssign) {
+static Type *binary(Parser *parser, bool canAssign) {
     TokenType operatorType = parser->previous.type;
-    Type leftType = parser->prevType;
+    Type *leftType = parser->prevType;
     ParseRule* rule = getRule(operatorType);
-    Type rightType = parsePrescedence(parser, (Prescedence)(rule->prescedence + 1));
+    Type *rightType = parsePrescedence(parser, (Prescedence)(rule->prescedence + 1));
 
-    Type numberT = type(parser->vm, "Number");
-    Type stringT = type(parser->vm, "String");
-    Type boolT = type(parser->vm, "Boolean");
+    Type *numberT = type(parser->vm, "Number");
+    Type *stringT = type(parser->vm, "String");
+    Type *boolT = type(parser->vm, "Boolean");
 
     switch (operatorType) {
         case TOKEN_BANG_EQUAL: emitBytes(parser, OP_EQUAL, OP_NOT); return boolT;
@@ -447,7 +469,7 @@ static Type binary(Parser *parser, bool canAssign) {
     }
 }
 
-static Type literal(Parser *parser, bool canAssign) {
+static Type *literal(Parser *parser, bool canAssign) {
     switch (parser->previous.type) {
         case TOKEN_FALSE: emitByte(parser, OP_FALSE); return type(parser->vm, "Boolean");
         case TOKEN_NIL: emitByte(parser, OP_NIL); return NIL_TYPE;
@@ -456,26 +478,26 @@ static Type literal(Parser *parser, bool canAssign) {
     }
 }
 
-static Type grouping(Parser *parser, bool canAssign) {
-    Type type = expression(parser);
+static Type *grouping(Parser *parser, bool canAssign) {
+    Type *type = expression(parser);
     consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
     return type;
 }
 
-static Type number(Parser *parser, bool canAssign) {
+static Type *number(Parser *parser, bool canAssign) {
     double value = strtod(parser->previous.start, NULL);
     emitConstant(parser, NUMBER_VAL(value));
     return type(parser->vm, "Number");
 }
 
-static Type string(Parser *parser, bool canAssign) {
+static Type *string(Parser *parser, bool canAssign) {
     emitConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start + 1, parser->previous.length - 2)));
     return type(parser->vm, "String");
 }
 
-static Type parseType(Parser *parser) {
+static Type *parseType(Parser *parser) {
     consume(parser, TOKEN_IDENTIFIER, "Expect type name.");
-    Type type = tokenType(parser->vm, parser->previous);
+    Type *type = tokenType(parser->vm, parser->previous);
     while (match(parser, TOKEN_PIPE)) {
         consume(parser, TOKEN_IDENTIFIER, "Expect type name after pipe.");
         type = unionType(parser->vm, type, tokenType(parser->vm, parser->previous));
@@ -483,16 +505,16 @@ static Type parseType(Parser *parser) {
     return type;
 }
 
-static Type namedVariable(Parser *parser, Token name, bool canAssign) {
+static Type *namedVariable(Parser *parser, Token name, bool canAssign) {
     Compiler *compiler = parser->currentCompiler;
 
     if (match(parser, TOKEN_COLON)) {
-        Type declaredType = parseType(parser);
+        Type *declaredType = parseType(parser);
         consume(parser, TOKEN_EQUAL, "Expect value for variable after type annotation.");
         // Declare before the initializer so a self-reference resolves to this
         // local with depth=-1 and is rejected by resolveLocal.
         declareVariable(parser, name, declaredType);
-        Type valueType = expression(parser);
+        Type *valueType = expression(parser);
         if (!isSubtype(valueType, declaredType)) {
             typeMismatch(parser, declaredType, valueType, "variable declaration");
         }
@@ -508,18 +530,17 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
         if (arg == -1) {
             // Implicit declaration: type is inferred from the initializer, so
             // we declare with a placeholder, evaluate, then patch the slot's
-            // type. Declaring first still gives us the self-init check. A
-            // local with the same name as a native simply shadows it.
+            // type. Declaring first still gives us the self-init check.
             declareVariable(parser, name, errorType(parser->vm));
-            Type valueType = expression(parser);
+            Type *valueType = expression(parser);
             compiler->locals[compiler->localCount - 1].type = valueType;
             markInitialized(parser);
             uint8_t slot = (uint8_t)(compiler->localCount - 1);
             emitBytes(parser, OP_GET_LOCAL, slot);
             return valueType;
         }
-        Type valueType = expression(parser);
-        Type existingType = compiler->locals[arg].type;
+        Type *valueType = expression(parser);
+        Type *existingType = compiler->locals[arg].type;
         if (!isSubtype(valueType, existingType)) {
             typeMismatch(parser, existingType, valueType, "assignment");
         }
@@ -545,16 +566,14 @@ static Type namedVariable(Parser *parser, Token name, bool canAssign) {
     return errorType(parser->vm);
 }
 
-static Type variable(Parser *parser, bool canAssign) {
+static Type *variable(Parser *parser, bool canAssign) {
     return namedVariable(parser, parser->previous, canAssign);
 }
 
 // `outer x = expr` assigns to the nearest variable named `x` in an enclosing
-// function scope (an upvalue), rather than implicitly declaring a new local the
-// way a bare `x = expr` would. This is Solace's analogue of Python's `nonlocal`:
-// it is the only path that writes through a captured upvalue. Errors if no such
-// outer variable exists. See memory note "upvalues-read-only-by-design".
-static Type outerVariable(Parser *parser, bool canAssign) {
+// function scope (an upvalue), Solace's analogue of Python's `nonlocal`:
+// it is the only path that writes through a captured upvalue. 
+static Type *outerVariable(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect variable name after 'outer'.");
     Token name = parser->previous;
 
@@ -567,8 +586,8 @@ static Type outerVariable(Parser *parser, bool canAssign) {
     }
 
     consume(parser, TOKEN_EQUAL, "Expect '=' after 'outer' variable.");
-    Type valueType = expression(parser);
-    Type existingType = parser->currentCompiler->upvalues[arg].type;
+    Type *valueType = expression(parser);
+    Type *existingType = parser->currentCompiler->upvalues[arg].type;
     if (!isSubtype(valueType, existingType)) {
         typeMismatch(parser, existingType, valueType, "outer assignment");
     }
@@ -576,7 +595,7 @@ static Type outerVariable(Parser *parser, bool canAssign) {
     return existingType;
 }
 
-static Type function(Parser *parser, FunctionType funType) {
+static Type *function(Parser *parser, FunctionType funType) {
     Compiler compiler;
     initCompiler(&compiler, parser, funType);
     parser->currentCompiler = &compiler;
@@ -592,7 +611,7 @@ static Type function(Parser *parser, FunctionType funType) {
             consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
             Token paramName = parser->previous;
 
-            Type paramType = NIL_TYPE;
+            Type *paramType = NIL_TYPE;
             if (match(parser, TOKEN_COLON)) {
                 paramType = parseType(parser);
             } else {
@@ -613,7 +632,7 @@ static Type function(Parser *parser, FunctionType funType) {
         compiler.function->returnType = type(parser->vm, "Any");
     }
 
-    Type funcType = functionType(parser->vm, compiler.function->returnType,
+    Type *funcType = functionType(parser->vm, compiler.function->returnType,
                                  &compiler.function->paramaters);
     compiler.locals[0].type = funcType;
     if (compiler.enclosing != NULL && compiler.enclosing->localCount > 0) {
@@ -638,15 +657,12 @@ static Type function(Parser *parser, FunctionType funType) {
 }
 
 
-// Coerce the value on top of the stack to a real Boolean. `OP_NOT` pushes
-// `BOOL_VAL(isFalsey(pop))`, so applying it twice yields `BOOL_VAL(!isFalsey(x))`
-// — the truthiness of x as a Boolean. Needed so the static `Boolean` result
-// type isn't a lie when short-circuit leaves an operand of any type on the stack.
+// Coerce the value on top of the stack to a real Boolean.
 static void emitCoerceBool(Parser *parser) {
     emitBytes(parser, OP_NOT, OP_NOT);
 }
 
-static Type and_(Parser *parser, bool canAssign) {
+static Type *and_(Parser *parser, bool canAssign) {
     emitCoerceBool(parser);                              // coerce left
     int endJump = emitJump(parser, OP_JUMP_IF_FALSE);
 
@@ -658,7 +674,7 @@ static Type and_(Parser *parser, bool canAssign) {
     return type(parser->vm, "Boolean");
 }
 
-static Type or_(Parser *parser, bool canAssign) {
+static Type *or_(Parser *parser, bool canAssign) {
     emitCoerceBool(parser);                              // coerce left
     int elseJump = emitJump(parser, OP_JUMP_IF_FALSE);
     int endJump = emitJump(parser, OP_JUMP);
@@ -673,10 +689,10 @@ static Type or_(Parser *parser, bool canAssign) {
     return type(parser->vm, "Boolean");
 }
 
-static Type unary(Parser *parser, bool canAssign) {
+static Type *unary(Parser *parser, bool canAssign) {
     TokenType operatorType = parser->previous.type;
 
-    Type operandType = parsePrescedence(parser, PREC_UNARY);
+    Type *operandType = parsePrescedence(parser, PREC_UNARY);
 
     switch (operatorType) {
         case TOKEN_NOT: emitByte(parser, OP_NOT); return type(parser->vm, "Boolean");
@@ -688,14 +704,14 @@ static Type unary(Parser *parser, bool canAssign) {
     }
 }
 
-static Type retExpr(Parser *parser, bool canAssign) {
+static Type *retExpr(Parser *parser, bool canAssign) {
     if (parser->currentCompiler->type == TYPE_SCRIPT) {
         error(parser, "Can't return from top-level code.");
         return errorType(parser->vm);
     }
 
-    Type valueType = expression(parser);
-    Type expected = parser->currentCompiler->function->returnType;
+    Type *valueType = expression(parser);
+    Type *expected = parser->currentCompiler->function->returnType;
     if (!isSubtype(valueType, expected)) {
         typeMismatch(parser, expected, valueType, "return value");
     }
@@ -703,19 +719,21 @@ static Type retExpr(Parser *parser, bool canAssign) {
     return valueType;
 }
 
-static Type call(Parser *parser, bool canAssign) {
+static Type *call(Parser *parser, bool canAssign) {
     // Snapshot callee type before argumentList — expression() inside the loop
     // will clobber parser->prevType with each argument's type.
-    Type calleeType = parser->prevType;
+    Type *calleeType = parser->prevType;
 
     Type *retSlot = NULL;
     Type *firstParamSlot = NULL;
-    bool fnTyped = isCallableType(calleeType);
+    bool fnTyped = isFunctionType(*calleeType);
     if (fnTyped) {
-        if (calleeType.generics != NULL) {
-            retSlot = calleeType.generics;
+        if (calleeType->generics != NULL) {
+            retSlot = calleeType->generics;
             firstParamSlot = retSlot->next;
         }
+    } else if (isClassType(*calleeType)) {
+        retSlot = calleeType->generics;
     } else if (!isErrorType(parser, calleeType)) {
         char buf[128], msg[256];
         formatType(calleeType, buf, sizeof(buf));
@@ -727,10 +745,10 @@ static Type call(Parser *parser, bool canAssign) {
     Type *paramSlot = firstParamSlot;
     if (!check(parser, TOKEN_RIGHT_PAREN)) {
         do {
-            Type argType = expression(parser);
+            Type *argType = expression(parser);
             if (fnTyped && paramSlot != NULL && paramSlot->generics != NULL) {
-                if (!isSubtype(argType, *paramSlot->generics)) {
-                    typeMismatch(parser, *paramSlot->generics, argType, "function argument");
+                if (!isSubtype(argType, paramSlot->generics)) {
+                    typeMismatch(parser, paramSlot->generics, argType, "function argument");
                 }
                 paramSlot = paramSlot->next;
             }
@@ -752,17 +770,17 @@ static Type call(Parser *parser, bool canAssign) {
 
     emitBytes(parser, OP_CALL, argCount);
 
-    if (retSlot != NULL && retSlot->generics != NULL) return *retSlot->generics;
+    if (retSlot != NULL && retSlot->generics != NULL) return retSlot->generics;
     return errorType(parser->vm);
 }
 
-static Type ifExpr(Parser *parser, bool canAssign) {
+static Type *ifExpr(Parser *parser, bool canAssign) {
     expression(parser);
 
     int thenJump = emitJump(parser, OP_JUMP_IF_FALSE);
     emitByte(parser, OP_POP);
     beginScope(parser);
-    Type thenType = NIL_TYPE;
+    Type *thenType = NIL_TYPE;
     bool thenEmpty = true;
     while (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE) && !parser->hadError) {
         thenType = expression(parser);
@@ -777,7 +795,7 @@ static Type ifExpr(Parser *parser, bool canAssign) {
     patchJump(parser, thenJump);
     emitByte(parser, OP_POP);
 
-    Type elseType = NIL_TYPE;
+    Type *elseType = NIL_TYPE;
     if (match(parser, TOKEN_ELSE)) {
         beginScope(parser);
         bool elseEmpty = true;
@@ -798,7 +816,7 @@ static Type ifExpr(Parser *parser, bool canAssign) {
     return unionType(parser->vm, thenType, elseType);
 }
 
-static Type whileExpr(Parser *parser, bool canAssign) {
+static Type *whileExpr(Parser *parser, bool canAssign) {
     // Initial value on stack for first iteration
     emitByte(parser, OP_NIL);
 
@@ -810,7 +828,7 @@ static Type whileExpr(Parser *parser, bool canAssign) {
     emitByte(parser, OP_POP);  // pop previous iteration result
 
     beginScope(parser);
-    Type lastType = NIL_TYPE;
+    Type *lastType = NIL_TYPE;
     bool bodyEmpty = true;
     while (!check(parser, TOKEN_END) && !parser->hadError) {
         lastType = expression(parser);
@@ -830,31 +848,27 @@ static Type whileExpr(Parser *parser, bool canAssign) {
     return lastType;
 }
 
-static Type funExpr(Parser *parser, bool canAssign) {
+static Type *funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
     Compiler *outer = parser->currentCompiler;
 
-    // Locals live on the operand stack; the slot is *whatever position the
-    // next pushed value lands at*. So declare first (reserving the slot at the
-    // current stack top), then let function() push the prototype into it.
-    // function() itself patches our outer-local type before compiling the body
-    // so recursive references resolve to a proper Function type.
     declareVariable(parser, parser->previous, errorType(parser->vm));
     uint8_t slot = (uint8_t)(outer->localCount - 1);
 
-    Type funcType = function(parser, TYPE_FUNCTION);
+    Type *funcType = function(parser, TYPE_FUNCTION);
     outer->locals[slot].type = funcType;
     markInitialized(parser);
 
-    // The expression-statement loop emits OP_PRINT (or OP_POP) after us, which
-    // would consume the function value and leave the slot pointing at stale
-    // memory. Duplicate via OP_GET_LOCAL so the consumer eats the copy.
     emitBytes(parser, OP_GET_LOCAL, slot);
     return funcType;
 }
 
-static Type class(Parser *parser, bool canAssign) {
+static Type *class(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect class name.");
+
+    Type *classType = type(parser->vm, "Class");
+    classType->generics = tokenType(parser->vm, parser->previous);
+
     uint8_t nameConstant = makeConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start, parser->previous.length)));
     declareVariable(parser, parser->previous, type(parser->vm, "Class"));
     uint8_t slot = (uint8_t)(parser->currentCompiler->localCount - 1);
@@ -862,10 +876,25 @@ static Type class(Parser *parser, bool canAssign) {
     emitBytes(parser, OP_CLASS, nameConstant);
     markInitialized(parser);
 
+    ClassCompiler classCompiler;
+    classCompiler.enclosing = parser->currentClass;
+    parser->currentClass = &classCompiler;
+
+    while (!check(parser, TOKEN_END) && !parser->hadError) {
+        consume(parser, TOKEN_IDENTIFIER, "Expect field name in class body.");
+        Token name = parser->previous;
+        Type *type = parseType(parser);
+        classCompiler.fields.data[classCompiler.fields.count].name = copyString(parser->vm, name.start, name.length);
+        classCompiler.fields.data[classCompiler.fields.count].type = type;
+        classCompiler.fields.data[classCompiler.fields.count].index = classCompiler.fields.count;
+        classCompiler.fields.count++;
+    }
+
     consume(parser, TOKEN_END, "Expect 'end' after class body.");
 
     emitBytes(parser, OP_GET_LOCAL, slot);
-    return type(parser->vm, "Class");
+    parser->currentClass = parser->currentClass->enclosing;
+    return classType;
 }
 
 
@@ -911,10 +940,10 @@ ParseRule rules[] = {
 };
 
 
-static Type parsePrescedence(Parser *parser, Prescedence prescedence) {
+static Type *parsePrescedence(Parser *parser, Prescedence prescedence) {
     advance(parser);
     ParseFn prefixRule = getRule(parser->previous.type)->prefix;
-    Type exprType;
+    Type *exprType;
     if (prefixRule == NULL) {
         error(parser, "Expect expression.");
         return errorType(parser->vm);
@@ -942,14 +971,13 @@ static ParseRule *getRule(TokenType type) {
     return &rules[type];
 }
 
-static Type expression(Parser *parser) {
+static Type *expression(Parser *parser) {
     return parsePrescedence(parser, PREC_ASSIGNMENT);
 }
 
 
 // Mark every prototype in the in-flight compiler chain so a GC triggered during
-// compilation doesn't collect functions that are still being built. No-op
-// outside compilation, when vm->parser is NULL.
+// compilation doesn't collect functions that are still being built.
 void markCompilerRoots(VM *vm) {
     if (vm->parser == NULL) return;
 
@@ -960,16 +988,9 @@ void markCompilerRoots(VM *vm) {
     }
 }
 
-// The REPL's top-level scope persists across lines so locals carry over. Its
-// locals reference type-name ObjStrings that are otherwise unrooted, so the GC
-// must reach them through markReplRoots while a session is live.
 static Compiler replCompiler;
 static bool replInitialized = false;
 
-// A local's name is a Token pointing into the source text it was lexed from.
-// Across REPL lines that source (main's line buffer) is overwritten, so every
-// line's text is retained here for the life of the session — otherwise a
-// carried-over local's name would resolve against stale memory.
 static char **replSources = NULL;
 static int replSourceCount = 0;
 static int replSourceCap = 0;
@@ -1013,6 +1034,7 @@ ObjPrototype *compile(VM *vm, const char *source) {
     parser.vm = vm;
     parser.prevType = errorType(vm);
     parser.currentCompiler = NULL;  // initCompiler reads this for `enclosing`
+    parser.currentClass = NULL;
     vm->parser = &parser;           // exposes the compiler chain to the GC
     Compiler compiler;
     initCompiler(&compiler, &parser, TYPE_SCRIPT);
@@ -1021,10 +1043,7 @@ ObjPrototype *compile(VM *vm, const char *source) {
     advance(&parser);
     
     // Top-level expressions, like function/if/while bodies, leave their value
-    // on the stack; declarations additionally emit a trailing OP_GET_LOCAL that
-    // duplicates the value for a consumer to pop. Without that pop here, every
-    // declaration leaks a copy onto the stack and the compiler's local-slot
-    // indices drift out of sync with the runtime stack positions.
+    // on the stack; pop to prevent stack overflow
     while (!match(&parser, TOKEN_EOF) && !parser.hadError) {
         expression(&parser);
         emitByte(&parser, OP_POP);
@@ -1036,9 +1055,6 @@ ObjPrototype *compile(VM *vm, const char *source) {
 
     #ifdef SLC_DEBUG
     if (!parser.hadError) {
-        // endCompiler popped the script compiler off, so currentChunk(&parser)
-        // would dereference a NULL currentCompiler. Use the returned function's
-        // chunk directly.
         disassembleChunk(&function->chunk, function->name != NULL ? function->name->chars : "<script>");
     }
     #endif
@@ -1047,8 +1063,6 @@ ObjPrototype *compile(VM *vm, const char *source) {
 }
 
 ObjFunction *compileRepl(VM *vm, const char *source, int *baseSlots) {
-    // Retain a stable copy: locals declared this line keep name Tokens that
-    // point into it, and they must stay valid for every later line.
     source = replRetainSource(source);
 
     Lexer lexer;
@@ -1066,15 +1080,11 @@ ObjFunction *compileRepl(VM *vm, const char *source, int *baseSlots) {
         initCompiler(&replCompiler, &parser, TYPE_SCRIPT);
         replInitialized = true;
     } else {
-        // Keep locals and localCount from prior lines; emit this line into a
-        // fresh chunk and reset the transient per-line state.
         replCompiler.function = newPrototype(vm);
         replCompiler.scopeDepth = 0;
     }
     parser.currentCompiler = &replCompiler;
 
-    // Slots already live before this line — slot 0 plus carried-over locals.
-    // The new line's bytecode resumes execution against this stack shape.
     int savedLocalCount = replCompiler.localCount;
     *baseSlots = savedLocalCount;
 
@@ -1083,8 +1093,7 @@ ObjFunction *compileRepl(VM *vm, const char *source, int *baseSlots) {
         expression(&parser);
         emitByte(&parser, OP_POP);
     }
-    // Pause rather than return: OP_HALT stops the VM without unwinding, leaving
-    // any locals this line declared on the stack for the next line.
+    // Pause rather than return; OP_HALT stops the VM without unwinding
     emitByte(&parser, OP_HALT);
 
     ObjPrototype *prototype = replCompiler.function;

@@ -13,28 +13,27 @@ typedef struct Type {
     struct Type *generics;
 } Type;
 
-bool typesEqual(Type one, Type two);
-// true iff every variant of `sub` appears in `super`. Number is a subtype of
+bool typesEqual(Type *one, Type *two);
+uint32_t hashType(Type *t);
+// true if every variant of `sub` appears in `super`. Number is a subtype of
 // Number | Nil; Number | Nil is not a subtype of Number.
-bool isSubtype(Type sub, Type super);
-Type type(struct VM *vm, char *name);
-Type tokenType(struct VM *vm, Token token);
-Type unionType(struct VM *vm, Type one, Type two);
-Type errorType(struct VM *vm);
+bool isSubtype(Type *sub, Type *super);
+Type *type(struct VM *vm, char *name);
+Type *tokenType(struct VM *vm, Token token);
+Type *unionType(struct VM *vm, Type *one, Type *two);
+Type *errorType(struct VM *vm);
 
 // Release the heap allocations owned by `t` (variant chain via `next` and the
-// slot/held-type chain via `generics`). The top-level Type is passed by value
-// and is not itself freed.
-void freeType(struct VM *vm, Type t);
+// slot/held-type chain via `generics`). The top-level Type is passed by reference
+// and is itself freed.
+void freeType(struct VM *vm, Type *t);
 
-MAKE_DYNAMIC_ARRAY_H(Type, TypeArray)
+MAKE_DYNAMIC_ARRAY_H(Type*, TypeArray)
 
 // Build a function type. Encoding: name="Function", `generics` points to a chain
 // of slot nodes linked by `next`. The first slot holds the return type; each
-// subsequent slot holds one parameter type. A slot's `generics` field is the
-// actual Type (which keeps its own `next` chain for union variants intact).
-// Slots use `name==NULL` as a sentinel so they aren't confused with real types.
-Type functionType(struct VM *vm, Type returnType, TypeArray *params);
+// subsequent slot holds one parameter type.
+Type *functionType(struct VM *vm, Type *returnType, TypeArray *params);
 
 bool isCallableType(Type t);
 bool isClassType(Type t);

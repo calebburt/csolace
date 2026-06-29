@@ -15,7 +15,7 @@ void *reallocate(VM *vm, void *pointer, size_t oldSize, size_t newSize);
 
 void markObject(VM *vm, Obj *object);
 void markValue(VM *vm, Value value);
-void markType(VM *vm, Type type);
+void markType(VM *vm, Type *type);
 
 void collectGarbage(VM *vm);
 

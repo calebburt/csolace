@@ -114,6 +114,16 @@ static bool cosNative(VM *vm, int argCount, Value *args, Value *out) {
     return true;
 }
 
+static bool tanNative(VM *vm, int argCount, Value *args, Value *out) {
+    (void)vm; (void)argCount;
+    if (!IS_NUMBER(args[0])) {
+        runtimeError(vm, "tan() expects a Number.");
+        return false;
+    }
+    *out = NUMBER_VAL(tan(AS_NUMBER(args[0])));
+    return true;
+}
+
 static bool sqrtNative(VM *vm, int argCount, Value *args, Value *out) {
     (void)vm; (void)argCount;
     if (!IS_NUMBER(args[0])) {
@@ -124,25 +134,25 @@ static bool sqrtNative(VM *vm, int argCount, Value *args, Value *out) {
     return true;
 }
 
+static void defineNativeWithParam(VM *vm, const char *name, NativeFn fn,
+                                   const char *returnType, const char *paramType) {
+    TypeArray params;
+    initTypeArray(&params);
+    appendTypeArray(vm, &params, type(vm, paramType));
+    defineNative(vm, name, fn, type(vm, returnType), &params);
+    freeTypeArray(vm, &params);
+}
+
 static void defineBuiltinNatives(VM *vm) {
     defineNative(vm, "clock", clockNative, type(vm, "Number"), NULL);
-
-    TypeArray printParams;
-    initTypeArray(&printParams);
-    appendTypeArray(vm, &printParams, type(vm, "Any"));
-    defineNative(vm, "print", printNative, type(vm, "Nil"), &printParams);
-    freeTypeArray(vm, &printParams);
-
+    defineNativeWithParam(vm, "print", printNative, "Nil", "Any");
     defineNative(vm, "input", inputNative, type(vm, "String"), NULL);
 
     // Math functions
-    TypeArray numParams;
-    initTypeArray(&numParams);
-    appendTypeArray(vm, &numParams, type(vm, "Number"));
-    defineNative(vm, "sin", sinNative, type(vm, "Number"), &numParams);
-    defineNative(vm, "cos", cosNative, type(vm, "Number"), &numParams);
-    defineNative(vm, "sqrt", sqrtNative, type(vm, "Number"), &numParams);
-    freeTypeArray(vm, &numParams);
+    defineNativeWithParam(vm, "sin", sinNative, "Number", "Number");
+    defineNativeWithParam(vm, "cos", cosNative, "Number", "Number");
+    defineNativeWithParam(vm, "tan", tanNative, "Number", "Number");
+    defineNativeWithParam(vm, "sqrt", sqrtNative, "Number", "Number");
 }
 
 void initVM(VM *vm) {
@@ -160,7 +170,7 @@ void initVM(VM *vm) {
 }
 
 void defineNative(VM *vm, const char *name, NativeFn fn,
-                  Type returnType, TypeArray *params) {
+                  Type *returnType, TypeArray *params) {
     if (vm->nativeCount == NATIVES_MAX) {
         fprintf(stderr, "Too many native functions registered.\n");
         exit(70);

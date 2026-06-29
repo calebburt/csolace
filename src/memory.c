@@ -57,14 +57,14 @@ void markValue(VM *vm, Value value) {
     if (IS_OBJ(value)) markObject(vm, AS_OBJ(value));
 }
 
-void markType(VM *vm, Type type) {
-    markObject(vm, (Obj*)type.name);
+void markType(VM *vm, Type *type) {
+    markObject(vm, (Obj*)type->name);
 
-    for (Type *slot = type.generics; slot != NULL; slot = slot->next) {
-        if (slot->generics != NULL) markType(vm, *slot->generics);
+    for (Type *slot = type->generics; slot != NULL; slot = slot->next) {
+        if (slot->generics != NULL) markType(vm, slot->generics);
     }
 
-    for (Type *variant = type.next; variant != NULL; variant = variant->next) {
+    for (Type *variant = type->next; variant != NULL; variant = variant->next) {
         markObject(vm, (Obj*)variant->name);
     }
 }
@@ -174,7 +174,9 @@ static void sweep(VM *vm) {
 
 void collectGarbage(VM *vm) {
     debug("-- gc begin\n");
+    #ifdef SLC_DEBUG
     size_t before = bytesAllocated;
+    #endif
 
     markRoots(vm);
     traceReferences(vm);

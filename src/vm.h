@@ -56,7 +56,7 @@ typedef struct VM {
     // Registered before compilation; the compiler resolves bare identifiers
     // against this table when local resolution misses.
     ObjNative *natives[NATIVES_MAX];
-    Type nativeTypes[NATIVES_MAX];
+    Type *nativeTypes[NATIVES_MAX];
     int nativeCount;
 
     char *source;
@@ -80,6 +80,6 @@ Value pop(VM *vm);
 // Register a native callable. `params` may be NULL for zero-arg natives.
 // `name` must outlive the VM (string literals are fine).
 void defineNative(VM *vm, const char *name, NativeFn fn,
-                  Type returnType, TypeArray *params);
+                  Type *returnType, TypeArray *params);
 
 #endif

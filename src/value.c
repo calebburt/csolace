@@ -98,6 +98,7 @@ uint32_t hashValue(Value value) {
 
 #define ALLOCATE_OBJ(vm, type, objectType) (type*)allocateObject(vm, sizeof(type), objectType)
 
+#ifdef SLC_DEBUG
 static const char *objTypeName(ObjType type) {
     switch (type) {
         case OBJ_FUNCTION: return "OBJ_FUNCTION";
@@ -108,6 +109,7 @@ static const char *objTypeName(ObjType type) {
         default: return "OBJ_UNKNOWN";
     }
 }
+#endif
 
 static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     Obj *object = (Obj*)reallocate(vm, NULL, 0, size);
