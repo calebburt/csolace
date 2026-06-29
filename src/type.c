@@ -49,7 +49,7 @@ bool isSubtype(Type *sub, Type *super) {
     return true;
 }
 
-Type *type(VM *vm, char *name) {
+Type *type(VM *vm, const char *name) {
     Type *type = ALLOCATE(vm, Type, 1);
     type->name = copyString(vm, name, strlen(name));
     type->next = NULL;
