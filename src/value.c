@@ -123,9 +123,10 @@ static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     return object;
 }
 
-ObjClass *newClass(VM *vm, ObjString *name) {
+ObjClass *newClass(VM *vm, ObjString *name, int fieldCount) {
     ObjClass *class = ALLOCATE_OBJ(vm, ObjClass, OBJ_CLASS);
     class->name = name;
+    class->fieldCount = fieldCount;
     return class;
 }
 

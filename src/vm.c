@@ -246,7 +246,7 @@ static bool callValue(VM *vm, Value callee, int argCount) {
             }
             case OBJ_CLASS: {
                 ObjClass* class = AS_CLASS(callee);
-                vm->stackTop[-argCount - 1] = OBJ_VAL(newInstance(vm, class, 0));
+                vm->stackTop[-argCount - 1] = OBJ_VAL(newInstance(vm, class, class->fieldCount));
                 return true;
             }
             default:
@@ -304,10 +304,6 @@ static InterpretResult run(VM *vm) {
 
 #define BINARY_OP(vm, valueType, op) \
     do { \
-      if (!IS_NUMBER(peek(vm, 0)) || !IS_NUMBER(peek(vm, 1))) { \
-        runtimeError(vm, "Operands must be numbers."); \
-        return INTERPRET_RUNTIME_ERROR; \
-      } \
       double b = AS_NUMBER(pop(vm)); \
       double a = AS_NUMBER(pop(vm)); \
       push(vm, valueType(a op b)); \
@@ -366,6 +362,23 @@ static InterpretResult run(VM *vm) {
                 pop(vm);
                 break;
             }
+            case OP_GET_FIELD: {
+                ObjInstance *instance = AS_INSTANCE(peek(vm, 0));
+                uint8_t id = READ_BYTE();
+
+                pop(vm);
+                push(vm, instance->fields[id]);
+                break;
+            }
+            case OP_SET_FIELD: {
+                ObjInstance *instance = AS_INSTANCE(peek(vm, 1));
+                uint8_t id = READ_BYTE();
+                Value value = pop(vm);
+                instance->fields[id] = value;
+                pop(vm);
+                push(vm, value);
+                break;
+            }
             case OP_EQUAL: {
                 Value b = pop(vm);
                 Value a = pop(vm);
@@ -396,6 +409,7 @@ static InterpretResult run(VM *vm) {
                     double a = AS_NUMBER(pop(vm));
                     push(vm, NUMBER_VAL(a + b));
                 } else {
+                    // unreachable
                     runtimeError(vm, "Operands must be two numbers or two strings.");
                     return INTERPRET_RUNTIME_ERROR;
                 }
@@ -406,10 +420,6 @@ static InterpretResult run(VM *vm) {
             case OP_DIVIDE: BINARY_OP(vm, NUMBER_VAL, /); break;
             case OP_NOT: push(vm, BOOL_VAL(isFalsey(pop(vm)))); break;
             case OP_NEGATE: {
-                if (!IS_NUMBER(peek(vm, 0))) {
-                    runtimeError(vm, "Operand must be a number.");
-                    return INTERPRET_RUNTIME_ERROR;
-                }
                 push(vm, NUMBER_VAL(-AS_NUMBER(pop(vm))));
                 break;
             }
@@ -471,7 +481,9 @@ static InterpretResult run(VM *vm) {
                 break;
             }
             case OP_CLASS: {
-                push(vm, OBJ_VAL(newClass(vm, READ_STRING())));
+                ObjString *name = READ_STRING();
+                uint8_t fieldCount = READ_BYTE();
+                push(vm, OBJ_VAL(newClass(vm, name, fieldCount)));
                 break;
             }
         }

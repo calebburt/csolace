@@ -65,7 +65,7 @@ typedef struct Compiler {
 
     Upvalue upvalues[UINT8_COUNT];
 
-    TypeTable types;
+    TypeTable *types;
 } Compiler;
 
 typedef struct ClassCompiler {
@@ -206,15 +206,16 @@ static void emitConstant(Parser *parser, Value value) {
     emitBytes(parser, OP_CONSTANT, makeConstant(parser, value));
 }
 
-static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) {
+static void initCompiler(Compiler *compiler, Parser *parser, FunctionType t) {
     compiler->enclosing = parser->currentCompiler;
     compiler->function = newPrototype(parser->vm);
-    compiler->type = type;
+    compiler->type = t;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
-    initTypeTable(&compiler->types);
+    compiler->types = ALLOCATE(parser->vm, TypeTable, 1);
+    initTypeTable(compiler->types);
 
-    if (type != TYPE_SCRIPT) {
+    if (t != TYPE_SCRIPT) {
         compiler->function->name = copyString(parser->vm, parser->previous.start, parser->previous.length);
     }
 
@@ -223,10 +224,10 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType type) 
     local->isCaptured = false;
     local->name.start = "";
     local->name.length = 0;
-    // Give the reserved slot a real type so markReplRoots can mark it safely;
-    local->type = errorType(parser->vm);
+    // Give the reserved slot a real type so markReplRoots can mark it safely.
+    local->type = type(parser->vm, "Any");
 
-    if (type != TYPE_SCRIPT) {
+    if (t != TYPE_SCRIPT) {
         local->name = parser->previous;
     }
 }
@@ -322,21 +323,23 @@ static bool identifiersEqual(Token *a, Token *b) {
 }
 
 // Add a local with an "uninitialized" depth sentinel (-1).
-static void addLocal(Parser *parser, Token name, Type *type) {
+static int addLocal(Parser *parser, Token name, Type *type) {
     Compiler *compiler = parser->currentCompiler;
     if (compiler->localCount == UINT8_COUNT) {
         error(parser, "Too many local variables in function.");
-        return;
+        return -1;
     }
 
+    int slot = compiler->localCount;
     Local *local = &compiler->locals[compiler->localCount++];
     local->name = name;
     local->depth = -1;
     local->isCaptured = false;
     local->type = type;
+    return slot;
 }
 
-static void declareVariable(Parser *parser, Token name, Type *type) {
+static int declareVariable(Parser *parser, Token name, Type *type) {
     Compiler *compiler = parser->currentCompiler;
     for (int i = compiler->localCount - 1; i >= 0; i--) {
         Local *local = &compiler->locals[i];
@@ -345,12 +348,21 @@ static void declareVariable(Parser *parser, Token name, Type *type) {
             error(parser, "Already a variable with this name in this scope.");
         }
     }
-    addLocal(parser, name, type);
+    return addLocal(parser, name, type);
+}
+
+static void markInitializedAt(Parser *parser, int slot) {
+    Compiler *compiler = parser->currentCompiler;
+    compiler->locals[slot].depth = compiler->scopeDepth;
 }
 
 static void markInitialized(Parser *parser) {
+    markInitializedAt(parser, parser->currentCompiler->localCount - 1);
+}
+
+static void setLocalType(Parser *parser, int slot, Type *type) {
     Compiler *compiler = parser->currentCompiler;
-    compiler->locals[compiler->localCount - 1].depth = compiler->scopeDepth;
+    compiler->locals[slot].type = type;
 }
 
 static int resolveLocal(Parser *parser, Compiler *compiler, Token *name) {
@@ -415,6 +427,24 @@ static int resolveNative(Parser *parser, Token *name) {
     }
     return -1;
 }
+
+static uint8_t findPropertyId(Parser *parser, Token name, Type *type) {
+    FieldList *fields = ALLOCATE(parser->vm, FieldList, 1);
+    if (getTypeTable(parser->currentCompiler->types, type, fields)) {
+        for (int i = 0; i < fields->count; i++) {
+            Field *field = &fields->data[i];
+            if (name.length == field->name->length && memcmp(name.start, field->name->chars, name.length) == 0) {
+                return field->index;
+            }
+        }
+        typeError(parser, "Unknown field.");
+        return 0;
+    } else {
+        typeError(parser, "Only instances have fields.");
+        return 0;
+    }
+}
+
 
 static Type *binary(Parser *parser, bool canAssign) {
     TokenType operatorType = parser->previous.type;
@@ -513,14 +543,13 @@ static Type *namedVariable(Parser *parser, Token name, bool canAssign) {
         consume(parser, TOKEN_EQUAL, "Expect value for variable after type annotation.");
         // Declare before the initializer so a self-reference resolves to this
         // local with depth=-1 and is rejected by resolveLocal.
-        declareVariable(parser, name, declaredType);
+        int slot = declareVariable(parser, name, declaredType);
         Type *valueType = expression(parser);
         if (!isSubtype(valueType, declaredType)) {
             typeMismatch(parser, declaredType, valueType, "variable declaration");
         }
-        markInitialized(parser);
-        uint8_t slot = (uint8_t)(compiler->localCount - 1);
-        emitBytes(parser, OP_GET_LOCAL, slot);
+        markInitializedAt(parser, slot);
+        emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
         return declaredType;
     }
 
@@ -529,14 +558,13 @@ static Type *namedVariable(Parser *parser, Token name, bool canAssign) {
     if (canAssign && match(parser, TOKEN_EQUAL)) {
         if (arg == -1) {
             // Implicit declaration: type is inferred from the initializer, so
-            // we declare with a placeholder, evaluate, then patch the slot's
-            // type. Declaring first still gives us the self-init check.
-            declareVariable(parser, name, errorType(parser->vm));
+            // we declare with a neutral placeholder, evaluate, then patch the
+            // slot's type. Declaring first still gives us the self-init check.
+            int slot = declareVariable(parser, name, type(parser->vm, "Any"));
             Type *valueType = expression(parser);
-            compiler->locals[compiler->localCount - 1].type = valueType;
-            markInitialized(parser);
-            uint8_t slot = (uint8_t)(compiler->localCount - 1);
-            emitBytes(parser, OP_GET_LOCAL, slot);
+            setLocalType(parser, slot, valueType);
+            markInitializedAt(parser, slot);
+            emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
             return valueType;
         }
         Type *valueType = expression(parser);
@@ -770,8 +798,43 @@ static Type *call(Parser *parser, bool canAssign) {
 
     emitBytes(parser, OP_CALL, argCount);
 
-    if (retSlot != NULL && retSlot->generics != NULL) return retSlot->generics;
+    if (fnTyped) {
+        if (retSlot != NULL && retSlot->generics != NULL) return retSlot->generics;
+    } else if (isClassType(*calleeType)) {
+        if (retSlot != NULL) return retSlot;
+    }
     return errorType(parser->vm);
+}
+
+static Type *dot(Parser *parser, bool canAssign) {
+    consume(parser, TOKEN_IDENTIFIER, "Expect property name after '.'.");
+    
+
+    FieldList *fields = ALLOCATE(parser->vm, FieldList, 1);
+    if (getTypeTable(parser->currentCompiler->types, parser->prevType, fields)) {
+
+    } else {
+        typeError(parser, "Only instances have fieldsss");
+        printValue(OBJ_VAL(parser->prevType->name));
+        return errorType(parser->vm);
+    }
+    uint8_t id = findPropertyId(parser, parser->previous, parser->prevType);
+    Type *expectedType = fields->data[id].type;
+
+    if (canAssign && match(parser, TOKEN_EQUAL)) {
+        Type *valueType = expression(parser);
+
+        if (!typesEqual(valueType, expectedType)) {
+            typeMismatch(parser, expectedType, valueType, "field assignment");
+            return errorType(parser->vm);
+        } else {
+            emitBytes(parser, OP_SET_FIELD, id);
+            return parser->prevType;
+        }
+    } else {
+        emitBytes(parser, OP_GET_FIELD, id);
+        return expectedType;
+    }
 }
 
 static Type *ifExpr(Parser *parser, bool canAssign) {
@@ -852,37 +915,35 @@ static Type *funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
     Compiler *outer = parser->currentCompiler;
 
-    declareVariable(parser, parser->previous, errorType(parser->vm));
-    uint8_t slot = (uint8_t)(outer->localCount - 1);
+    int slot = declareVariable(parser, parser->previous, type(parser->vm, "Any"));
 
     Type *funcType = function(parser, TYPE_FUNCTION);
     outer->locals[slot].type = funcType;
-    markInitialized(parser);
+    markInitializedAt(parser, slot);
 
-    emitBytes(parser, OP_GET_LOCAL, slot);
+    emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
     return funcType;
 }
 
 static Type *class(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect class name.");
 
+    Type *classNameType = tokenType(parser->vm, parser->previous);
     Type *classType = type(parser->vm, "Class");
-    classType->generics = tokenType(parser->vm, parser->previous);
+    classType->generics = classNameType;
 
-    uint8_t nameConstant = makeConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start, parser->previous.length)));
-    declareVariable(parser, parser->previous, type(parser->vm, "Class"));
-    uint8_t slot = (uint8_t)(parser->currentCompiler->localCount - 1);
-
-    emitBytes(parser, OP_CLASS, nameConstant);
-    markInitialized(parser);
-
-    ClassCompiler classCompiler;
+    ClassCompiler classCompiler = {0};
     classCompiler.enclosing = parser->currentClass;
     parser->currentClass = &classCompiler;
+
+    uint8_t nameConstant = makeConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start, parser->previous.length)));
+    int slot = declareVariable(parser, parser->previous, classType);
+    markInitializedAt(parser, slot);
 
     while (!check(parser, TOKEN_END) && !parser->hadError) {
         consume(parser, TOKEN_IDENTIFIER, "Expect field name in class body.");
         Token name = parser->previous;
+        consume(parser, TOKEN_COLON, "Expect type after field name.");
         Type *type = parseType(parser);
         classCompiler.fields.data[classCompiler.fields.count].name = copyString(parser->vm, name.start, name.length);
         classCompiler.fields.data[classCompiler.fields.count].type = type;
@@ -891,6 +952,15 @@ static Type *class(Parser *parser, bool canAssign) {
     }
 
     consume(parser, TOKEN_END, "Expect 'end' after class body.");
+
+    if (classCompiler.fields.count > UINT8_MAX) {
+        error(parser, "Class has too many fields.");
+        classCompiler.fields.count = UINT8_MAX;
+    }
+    emitByte(parser, OP_CLASS);
+    emitByte(parser, nameConstant);
+    emitByte(parser, (uint8_t)classCompiler.fields.count);
+    setTypeTable(parser->vm, parser->currentCompiler->types, classNameType, classCompiler.fields);
 
     emitBytes(parser, OP_GET_LOCAL, slot);
     parser->currentClass = parser->currentClass->enclosing;
@@ -902,7 +972,7 @@ ParseRule rules[] = {
     [TOKEN_LEFT_PAREN]    = {grouping,      call,   PREC_CALL},
     [TOKEN_RIGHT_PAREN]   = {NULL,          NULL,   PREC_NONE},
     [TOKEN_COMMA]         = {NULL,          NULL,   PREC_NONE},
-    [TOKEN_DOT]           = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_DOT]           = {NULL,          dot,    PREC_CALL},
     [TOKEN_MINUS]         = {unary,         binary, PREC_TERM},
     [TOKEN_PLUS]          = {NULL,          binary, PREC_TERM},
     [TOKEN_SLASH]         = {NULL,          binary, PREC_FACTOR},

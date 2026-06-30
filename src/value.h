@@ -34,8 +34,7 @@ typedef struct ObjString {
 
 typedef struct {
     Obj obj;
-    ObjString *name;
-} ObjClass;
+    ObjString *name;    int fieldCount;} ObjClass;
 
 typedef struct {
     Obj obj;
@@ -128,7 +127,7 @@ void printValue(Value value);
 bool valuesEqual(Value a, Value b);
 uint32_t hashValue(Value value);
 
-ObjClass *newClass(VM *vm, ObjString *name);
+ObjClass *newClass(VM *vm, ObjString *name, int fieldCount);
 ObjFunction *newFunction(VM *vm, ObjPrototype *prototype);
 ObjPrototype *newPrototype(VM *vm);
 ObjString *copyString(VM *vm, const char *chars, int length);
