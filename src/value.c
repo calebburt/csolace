@@ -1,4 +1,3 @@
-#include "common.h"
 #include "value.h"
 #include "vm.h"
 #include "memory.h"
@@ -37,6 +36,8 @@ void printObject(Value value) {
             break;
         case OBJ_PROTOTYPE:
             printFunction(AS_PROTOTYPE(value));
+            break;
+        case OBJ_BOUND_METHOD:
             break;
     }
 }
@@ -106,6 +107,9 @@ static const char *objTypeName(ObjType type) {
         case OBJ_UPVALUE: return "OBJ_UPVALUE";
         case OBJ_NATIVE: return "OBJ_NATIVE";
         case OBJ_PROTOTYPE: return "OBJ_PROTOTYPE";
+        case OBJ_BOUND_METHOD: return "OBJ_BOUND_METHOD";
+        case OBJ_CLASS: return "OBJ_CLASS";
+        case OBJ_INSTANCE: return "OBJ_INSTANCE";
         default: return "OBJ_UNKNOWN";
     }
 }
@@ -127,6 +131,7 @@ ObjClass *newClass(VM *vm, ObjString *name, int fieldCount) {
     ObjClass *class = ALLOCATE_OBJ(vm, ObjClass, OBJ_CLASS);
     class->name = name;
     class->fieldCount = fieldCount;
+    initValueArray(&class->methods);
     return class;
 }
 
@@ -182,12 +187,12 @@ ObjUpvalue *newUpvalue(VM *vm, Value *slot) {
     return upvalue;
 }
 
-ObjInstance *newInstance(VM *vm, ObjClass *class, int fieldCount) {
+ObjInstance *newInstance(VM *vm, ObjClass *class) {
     ObjInstance *instance = ALLOCATE_OBJ(vm, ObjInstance, OBJ_INSTANCE);
     instance->obj.class = (Obj*)class;
-    instance->fieldCount = fieldCount;
-    instance->fields = ALLOCATE(vm, Value, fieldCount);
-    for (int i = 0; i < fieldCount; i++) {
+    instance->fieldCount = class->fieldCount;
+    instance->fields = ALLOCATE(vm, Value, class->fieldCount);
+    for (int i = 0; i < class->fieldCount; i++) {
         instance->fields[i] = NIL_VAL;
     }
     return instance;
@@ -197,6 +202,8 @@ void freeObject(VM *vm, Obj *object) {
     debug("%p free type %s\n", (void*)object, objTypeName(object->type));
     switch (object->type) {
         case OBJ_CLASS: {
+            ObjClass* class = (ObjClass*)object;
+            freeValueArray(vm, &class->methods);
             FREE(vm, ObjClass, object);
             break;
         }

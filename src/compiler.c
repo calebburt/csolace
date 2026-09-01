@@ -3,6 +3,7 @@
 #include "lexer.h"
 #include "memory.h"
 #include "type.h"
+#include "value.h"
 #include "vm.h"
 #ifdef SLC_DEBUG
 #include "debug.h"
@@ -46,13 +47,29 @@ typedef struct { // Name fields so dynamic array can be swapped in easily.
     int count;
 } FieldList;
 
+typedef struct {
+    ObjString *name;
+    uint8_t index;
+    Type *type;
+} Method;
+
+typedef struct { // Name fields so dynamic array can be swapped in easily.
+    Method data[UINT8_COUNT];
+    int count;
+} MethodList;
+
 typedef enum {
     TYPE_FUNCTION,
     TYPE_SCRIPT
 } FunctionType;
 
-MAKE_TABLE_H(TypeTable, TypeTableEntry, Type*, FieldList, hashType, typesEqual)
-MAKE_TABLE(TypeTable, TypeTableEntry, Type*, FieldList, hashType, typesEqual)
+typedef struct {
+    FieldList fields;
+    MethodList methods;
+} TypeInfo;
+
+MAKE_TABLE_H(TypeTable, TypeTableEntry, Type*, TypeInfo, hashType, typesEqual)
+MAKE_TABLE(TypeTable, TypeTableEntry, Type*, TypeInfo, hashType, typesEqual)
 
 typedef struct Compiler {
     struct Compiler *enclosing;
@@ -71,6 +88,7 @@ typedef struct Compiler {
 typedef struct ClassCompiler {
     struct ClassCompiler *enclosing;
     FieldList fields;
+    MethodList methods;
 } ClassCompiler;
 
 typedef struct Parser {
@@ -429,10 +447,11 @@ static int resolveNative(Parser *parser, Token *name) {
 }
 
 static uint8_t findPropertyId(Parser *parser, Token name, Type *type) {
-    FieldList *fields = ALLOCATE(parser->vm, FieldList, 1);
+    TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
+    
     if (getTypeTable(parser->currentCompiler->types, type, fields)) {
-        for (int i = 0; i < fields->count; i++) {
-            Field *field = &fields->data[i];
+        for (int i = 0; i < fields->fields.count; i++) {
+            Field *field = &fields->fields.data[i];
             if (name.length == field->name->length && memcmp(name.start, field->name->chars, name.length) == 0) {
                 return field->index;
             }
@@ -684,6 +703,14 @@ static Type *function(Parser *parser, FunctionType funType) {
     return funcType;
 }
 
+static void method(Parser *parser) {
+  consume(parser, TOKEN_IDENTIFIER, "Expect method name.");
+
+  FunctionType type = TYPE_FUNCTION;
+  function(parser, type);
+  emitByte(parser, OP_METHOD);
+}
+
 
 // Coerce the value on top of the stack to a real Boolean.
 static void emitCoerceBool(Parser *parser) {
@@ -810,16 +837,16 @@ static Type *dot(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect property name after '.'.");
     
 
-    FieldList *fields = ALLOCATE(parser->vm, FieldList, 1);
+    TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
     if (getTypeTable(parser->currentCompiler->types, parser->prevType, fields)) {
 
     } else {
-        typeError(parser, "Only instances have fieldsss");
+        typeError(parser, "Only instances have fields.");
         printValue(OBJ_VAL(parser->prevType->name));
         return errorType(parser->vm);
     }
     uint8_t id = findPropertyId(parser, parser->previous, parser->prevType);
-    Type *expectedType = fields->data[id].type;
+    Type *expectedType = fields->fields.data[id].type;
 
     if (canAssign && match(parser, TOKEN_EQUAL)) {
         Type *valueType = expression(parser);
@@ -936,19 +963,25 @@ static Type *class(Parser *parser, bool canAssign) {
     classCompiler.enclosing = parser->currentClass;
     parser->currentClass = &classCompiler;
 
+    Token className = parser->previous;
+
     uint8_t nameConstant = makeConstant(parser, OBJ_VAL(copyString(parser->vm, parser->previous.start, parser->previous.length)));
     int slot = declareVariable(parser, parser->previous, classType);
     markInitializedAt(parser, slot);
 
     while (!check(parser, TOKEN_END) && !parser->hadError) {
-        consume(parser, TOKEN_IDENTIFIER, "Expect field name in class body.");
-        Token name = parser->previous;
-        consume(parser, TOKEN_COLON, "Expect type after field name.");
-        Type *type = parseType(parser);
-        classCompiler.fields.data[classCompiler.fields.count].name = copyString(parser->vm, name.start, name.length);
-        classCompiler.fields.data[classCompiler.fields.count].type = type;
-        classCompiler.fields.data[classCompiler.fields.count].index = classCompiler.fields.count;
-        classCompiler.fields.count++;
+        if (match(parser, TOKEN_IDENTIFIER)) {
+            Token name = parser->previous;
+            consume(parser, TOKEN_COLON, "Expect type after field name.");
+            Type *type = parseType(parser);
+            classCompiler.fields.data[classCompiler.fields.count].name = copyString(parser->vm, name.start, name.length);
+            classCompiler.fields.data[classCompiler.fields.count].type = type;
+            classCompiler.fields.data[classCompiler.fields.count].index = classCompiler.fields.count;
+            classCompiler.fields.count++;
+        } else {
+            consume(parser, TOKEN_DEF, "Expect field name or method definition in class body.");
+            method(parser);
+        }
     }
 
     consume(parser, TOKEN_END, "Expect 'end' after class body.");
@@ -960,9 +993,14 @@ static Type *class(Parser *parser, bool canAssign) {
     emitByte(parser, OP_CLASS);
     emitByte(parser, nameConstant);
     emitByte(parser, (uint8_t)classCompiler.fields.count);
-    setTypeTable(parser->vm, parser->currentCompiler->types, classNameType, classCompiler.fields);
+    
+    namedVariable(parser, className, false);
 
-    emitBytes(parser, OP_GET_LOCAL, slot);
+    TypeInfo typeInfo;
+    typeInfo.fields = classCompiler.fields;
+    typeInfo.methods = classCompiler.methods;
+    setTypeTable(parser->vm, parser->currentCompiler->types, classNameType, typeInfo);
+
     parser->currentClass = parser->currentClass->enclosing;
     return classType;
 }

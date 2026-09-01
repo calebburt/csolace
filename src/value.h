@@ -7,6 +7,7 @@
 typedef struct VM VM;
 
 typedef enum {
+    OBJ_BOUND_METHOD,
     OBJ_CLASS,
     OBJ_FUNCTION,
     OBJ_STRING,
@@ -34,10 +35,6 @@ typedef struct ObjString {
 
 typedef struct {
     Obj obj;
-    ObjString *name;    int fieldCount;} ObjClass;
-
-typedef struct {
-    Obj obj;
     int fieldCount;
     Value *fields;
 } ObjInstance;
@@ -61,6 +58,8 @@ typedef struct Value {
     } as;
 } Value;
 
+MAKE_DYNAMIC_ARRAY_H(Value, ValueArray)
+
 // NativeFn must come after Value since it references Value by name.
 typedef bool (*NativeFn)(VM *vm, int argCount, Value *args, Value *out);
 
@@ -83,6 +82,19 @@ typedef struct {
     ObjUpvalue **upvalues;
     int upvalueCount;
 } ObjFunction;
+
+typedef struct {
+    Obj obj;
+    Value receiver;
+    ObjFunction* method;
+} ObjBoundMethod;
+
+typedef struct {
+    Obj obj;
+    ObjString *name; 
+    int fieldCount;
+    ValueArray methods;
+} ObjClass;
 
 static inline bool isObjType(Value value, ObjType type);
 
@@ -121,8 +133,6 @@ static inline bool isObjType(Value value, ObjType type);
 #define GET_CLASS(value) ((ObjClass*)AS_OBJ(value)->class)
 
 
-MAKE_DYNAMIC_ARRAY_H(Value, ValueArray)
-
 void printValue(Value value);
 bool valuesEqual(Value a, Value b);
 uint32_t hashValue(Value value);
@@ -133,7 +143,7 @@ ObjPrototype *newPrototype(VM *vm);
 ObjString *copyString(VM *vm, const char *chars, int length);
 ObjUpvalue *newUpvalue(VM *vm, Value *slot);
 ObjString *allocateString(VM *vm, char *chars, int length);
-ObjInstance *newInstance(VM *vm, ObjClass *class, int fieldCount);
+ObjInstance *newInstance(VM *vm, ObjClass *class);
 ObjNative *newNative(VM *vm, NativeFn function, const char *name);
 
 void freeObject(VM *vm, Obj *object);

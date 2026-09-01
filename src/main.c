@@ -1,6 +1,3 @@
-#include "common.h"
-#include "chunk.h"
-#include "debug.h"
 #include "vm.h"
 
 static void repl(VM *vm) {

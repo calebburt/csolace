@@ -1,4 +1,3 @@
-#include "common.h"
 #include "debug.h"
 #include "value.h"
 
@@ -117,6 +116,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
             return offset + 3;
         }
         case OP_HALT: return simpleInstruction("OP_HALT", offset);
+        case OP_METHOD: return constantInstruction("OP_METHOD", chunk, offset);
         default:
             printf("Unknown Opcode %d\n", instruction);
             return offset + 1;

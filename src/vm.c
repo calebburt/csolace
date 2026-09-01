@@ -1,12 +1,14 @@
-#include "common.h"
 #include "chunk.h"
 #include "value.h"
 #include "vm.h"
 #include "compiler.h"
-#include "debug.h"
 #include <stdarg.h>
 #include <time.h>
 #include <math.h>
+
+#ifdef SLC_DEBUG
+#include "debug.h"
+#endif
 
 static void resetStack(VM *vm) {
     vm->stackTop = vm->stack;
@@ -246,7 +248,7 @@ static bool callValue(VM *vm, Value callee, int argCount) {
             }
             case OBJ_CLASS: {
                 ObjClass* class = AS_CLASS(callee);
-                vm->stackTop[-argCount - 1] = OBJ_VAL(newInstance(vm, class, class->fieldCount));
+                vm->stackTop[-argCount - 1] = OBJ_VAL(newInstance(vm, class));
                 return true;
             }
             default:
@@ -289,6 +291,13 @@ static void closeUpvalues(VM *vm, Value *last) {
         upvalue->location = &upvalue->closed;
         vm->openUpvalues = upvalue->next;
     }
+}
+
+static void defineMethod(VM *vm) {
+  Value method = peek(vm, 0);
+  ObjClass* class = AS_CLASS(peek(vm, 1));
+  appendValueArray(vm, &class->methods, method);
+  pop(vm);
 }
 
 static bool isFalsey(Value value) {
@@ -486,6 +495,9 @@ static InterpretResult run(VM *vm) {
                 push(vm, OBJ_VAL(newClass(vm, name, fieldCount)));
                 break;
             }
+            case OP_METHOD:
+                defineMethod(vm);
+                break;
         }
     }
 

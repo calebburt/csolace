@@ -115,6 +115,7 @@ static void blackenObject(VM *vm, Obj *object) {
         case OBJ_CLASS: {
             ObjClass *class = (ObjClass*)object;
             markObject(vm, (Obj*)class->name);
+            markArray(vm, &class->methods);
             break;
         }
     }
