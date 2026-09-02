@@ -188,13 +188,15 @@ ObjUpvalue *newUpvalue(VM *vm, Value *slot) {
 }
 
 ObjInstance *newInstance(VM *vm, ObjClass *class) {
+    Value *fields = ALLOCATE(vm, Value, class->fieldCount);
+    for (int i = 0; i < class->fieldCount; i++) {
+        fields[i] = NIL_VAL;
+    }
+
     ObjInstance *instance = ALLOCATE_OBJ(vm, ObjInstance, OBJ_INSTANCE);
     instance->obj.class = (Obj*)class;
     instance->fieldCount = class->fieldCount;
-    instance->fields = ALLOCATE(vm, Value, class->fieldCount);
-    for (int i = 0; i < class->fieldCount; i++) {
-        instance->fields[i] = NIL_VAL;
-    }
+    instance->fields = fields;
     return instance;
 }
 

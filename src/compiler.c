@@ -969,6 +969,11 @@ static Type *class(Parser *parser, bool canAssign) {
     int slot = declareVariable(parser, parser->previous, classType);
     markInitializedAt(parser, slot);
 
+    emitByte(parser, OP_CLASS);
+    emitByte(parser, nameConstant);
+    int fieldCountOffset = currentChunk(parser)->code.count;
+    emitByte(parser, 0);
+
     while (!check(parser, TOKEN_END) && !parser->hadError) {
         if (match(parser, TOKEN_IDENTIFIER)) {
             Token name = parser->previous;
@@ -990,9 +995,7 @@ static Type *class(Parser *parser, bool canAssign) {
         error(parser, "Class has too many fields.");
         classCompiler.fields.count = UINT8_MAX;
     }
-    emitByte(parser, OP_CLASS);
-    emitByte(parser, nameConstant);
-    emitByte(parser, (uint8_t)classCompiler.fields.count);
+    currentChunk(parser)->code.data[fieldCountOffset] = (uint8_t)classCompiler.fields.count;
     
     namedVariable(parser, className, false);
 
