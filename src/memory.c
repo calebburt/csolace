@@ -85,6 +85,12 @@ static void blackenObject(VM *vm, Obj *object) {
     markObject(vm, object->class);
 
     switch (object->type) {
+        case OBJ_BOUND_METHOD: {
+            ObjBoundMethod* bound = (ObjBoundMethod*)object;
+            markValue(vm, bound->receiver);
+            markObject(vm, (Obj*)bound->method);
+            break;
+        }
         case OBJ_NATIVE:
         case OBJ_STRING:
             break;

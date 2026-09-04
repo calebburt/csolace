@@ -456,10 +456,24 @@ static uint8_t findPropertyId(Parser *parser, Token name, Type *type) {
                 return field->index;
             }
         }
-        typeError(parser, "Unknown field.");
         return 255;
     } else {
-        typeError(parser, "Only instances have fields.");
+        return 255;
+    }
+}
+
+static uint8_t findMethodId(Parser *parser, Token name, Type *type) {
+    TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
+    
+    if (getTypeTable(parser->currentCompiler->types, type, fields)) {
+        for (int i = 0; i < fields->methods.count; i++) {
+            Method *method = &fields->methods.data[i];
+            if (name.length == method->name->length && memcmp(name.start, method->name->chars, name.length) == 0) {
+                return method->index;
+            }
+        }
+        return 255;
+    } else {
         return 255;
     }
 }
@@ -842,14 +856,21 @@ static Type *dot(Parser *parser, bool canAssign) {
         printValue(OBJ_VAL(parser->prevType->name));
         return errorType(parser->vm);
     }
-    uint8_t id = findPropertyId(parser, parser->previous, parser->prevType);
+    bool isMethod = false;
+    uint8_t id;
+    id = findPropertyId(parser, parser->previous, parser->prevType);
     if (id == 255) {
-        // error already reported
-        return errorType(parser->vm);
+        id = findMethodId(parser, parser->previous, parser->prevType);
+        if (id == 255) {
+            typeError(parser, "Unknown field or method.");
+            return errorType(parser->vm);
+        }
+    } else {
+        isMethod = true;
     }
     Type *expectedType = fields->fields.data[id].type;
 
-    if (canAssign && match(parser, TOKEN_EQUAL)) {
+    if (canAssign && match(parser, TOKEN_EQUAL) && !isMethod) {
         Type *valueType = expression(parser);
 
         if (!typesEqual(valueType, expectedType)) {
@@ -860,7 +881,11 @@ static Type *dot(Parser *parser, bool canAssign) {
             return parser->prevType;
         }
     } else {
-        emitBytes(parser, OP_GET_FIELD, id);
+        if (isMethod) {
+            emitBytes(parser, OP_GET_METHOD, id);
+        } else {
+            emitBytes(parser, OP_GET_FIELD, id);
+        }
         return expectedType;
     }
 }

@@ -15,6 +15,9 @@ static void printFunction(ObjPrototype *function) {
 
 void printObject(Value value) {
     switch (OBJ_TYPE(value)) {
+        case OBJ_BOUND_METHOD:
+            printFunction(AS_BOUND_METHOD(value)->method->prototype);
+            break;
         case OBJ_CLASS: {
             printf("<Class %s>", AS_CLASS(value)->name->chars);
             break;
@@ -36,8 +39,6 @@ void printObject(Value value) {
             break;
         case OBJ_PROTOTYPE:
             printFunction(AS_PROTOTYPE(value));
-            break;
-        case OBJ_BOUND_METHOD:
             break;
     }
 }
@@ -127,6 +128,13 @@ static Obj* allocateObject(VM *vm, size_t size, ObjType type) {
     return object;
 }
 
+ObjBoundMethod* newBoundMethod(VM *vm, Value receiver, ObjFunction* method) {
+  ObjBoundMethod* bound = ALLOCATE_OBJ(vm, ObjBoundMethod, OBJ_BOUND_METHOD);
+  bound->receiver = receiver;
+  bound->method = method;
+  return bound;
+}
+
 ObjClass *newClass(VM *vm, ObjString *name, int fieldCount) {
     ObjClass *class = ALLOCATE_OBJ(vm, ObjClass, OBJ_CLASS);
     class->name = name;
@@ -203,6 +211,9 @@ ObjInstance *newInstance(VM *vm, ObjClass *class) {
 void freeObject(VM *vm, Obj *object) {
     debug("%p free type %s\n", (void*)object, objTypeName(object->type));
     switch (object->type) {
+        case OBJ_BOUND_METHOD:
+            FREE(vm, ObjBoundMethod, object);
+            break;
         case OBJ_CLASS: {
             ObjClass* class = (ObjClass*)object;
             freeValueArray(vm, &class->methods);

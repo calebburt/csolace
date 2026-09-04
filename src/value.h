@@ -115,6 +115,7 @@ static inline bool isObjType(Value value, ObjType type);
 
 #define OBJ_TYPE(value) (AS_OBJ(value)->type)
 
+#define IS_BOUND_METHOD(value) isObjType(value, OBJ_BOUND_METHOD)
 #define IS_CLASS(value) isObjType(value, OBJ_CLASS)
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
 #define IS_STRING(value) isObjType(value, OBJ_STRING)
@@ -122,6 +123,7 @@ static inline bool isObjType(Value value, ObjType type);
 #define IS_INSTANCE(value) isObjType(value, OBJ_INSTANCE)
 #define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 
+#define AS_BOUND_METHOD(value) ((ObjBoundMethod*)AS_OBJ(value))
 #define AS_CLASS(value) ((ObjClass*)AS_OBJ(value))
 #define AS_FUNCTION(value) ((ObjFunction*)AS_OBJ(value))
 #define AS_STRING(value) ((ObjString*)AS_OBJ(value))
@@ -137,6 +139,7 @@ void printValue(Value value);
 bool valuesEqual(Value a, Value b);
 uint32_t hashValue(Value value);
 
+ObjBoundMethod* newBoundMethod(VM *vm, Value receiver, ObjFunction* method);
 ObjClass *newClass(VM *vm, ObjString *name, int fieldCount);
 ObjFunction *newFunction(VM *vm, ObjPrototype *prototype);
 ObjPrototype *newPrototype(VM *vm);
