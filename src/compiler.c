@@ -243,7 +243,7 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType t) {
     local->name.start = "";
     local->name.length = 0;
     // Give the reserved slot a real type so markReplRoots can mark it safely.
-    local->type = type(parser->vm, "Any");
+    local->type = type(parser->vm, "Any - Init");
 
     if (t != TYPE_SCRIPT) {
         local->name = parser->previous;
@@ -457,10 +457,10 @@ static uint8_t findPropertyId(Parser *parser, Token name, Type *type) {
             }
         }
         typeError(parser, "Unknown field.");
-        return 0;
+        return 255;
     } else {
         typeError(parser, "Only instances have fields.");
-        return 0;
+        return 255;
     }
 }
 
@@ -579,7 +579,7 @@ static Type *namedVariable(Parser *parser, Token name, bool canAssign) {
             // Implicit declaration: type is inferred from the initializer, so
             // we declare with a neutral placeholder, evaluate, then patch the
             // slot's type. Declaring first still gives us the self-init check.
-            int slot = declareVariable(parser, name, type(parser->vm, "Any"));
+            int slot = declareVariable(parser, name, type(parser->vm, "Any - Var"));
             Type *valueType = expression(parser);
             setLocalType(parser, slot, valueType);
             markInitializedAt(parser, slot);
@@ -662,7 +662,7 @@ static Type *function(Parser *parser, FunctionType funType) {
             if (match(parser, TOKEN_COLON)) {
                 paramType = parseType(parser);
             } else {
-                paramType = type(parser->vm, "Any");
+                paramType = type(parser->vm, "Any - Param");
             }
 
             declareVariable(parser, paramName, paramType);
@@ -676,15 +676,12 @@ static Type *function(Parser *parser, FunctionType funType) {
     if (match(parser, TOKEN_GREATER)) {
         compiler.function->returnType = parseType(parser);
     } else {
-        compiler.function->returnType = type(parser->vm, "Any");
+        compiler.function->returnType = type(parser->vm, "Any - Return");
     }
 
     Type *funcType = functionType(parser->vm, compiler.function->returnType,
                                  &compiler.function->paramaters);
     compiler.locals[0].type = funcType;
-    if (compiler.enclosing != NULL && compiler.enclosing->localCount > 0) {
-        compiler.enclosing->locals[compiler.enclosing->localCount - 1].type = funcType;
-    }
 
     while (!check(parser, TOKEN_END) && !parser->hadError) {
         expression(parser);
@@ -846,6 +843,10 @@ static Type *dot(Parser *parser, bool canAssign) {
         return errorType(parser->vm);
     }
     uint8_t id = findPropertyId(parser, parser->previous, parser->prevType);
+    if (id == 255) {
+        // error already reported
+        return errorType(parser->vm);
+    }
     Type *expectedType = fields->fields.data[id].type;
 
     if (canAssign && match(parser, TOKEN_EQUAL)) {
@@ -942,7 +943,7 @@ static Type *funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
     Compiler *outer = parser->currentCompiler;
 
-    int slot = declareVariable(parser, parser->previous, type(parser->vm, "Any"));
+    int slot = declareVariable(parser, parser->previous, type(parser->vm, "Any - Placeholder"));
 
     Type *funcType = function(parser, TYPE_FUNCTION);
     outer->locals[slot].type = funcType;
