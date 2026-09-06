@@ -714,12 +714,18 @@ static Type *function(Parser *parser, FunctionType funType) {
     return funcType;
 }
 
-static void method(Parser *parser) {
-  consume(parser, TOKEN_IDENTIFIER, "Expect method name.");
+static void method(Parser *parser, ClassCompiler *classCompiler) {
+    consume(parser, TOKEN_IDENTIFIER, "Expect method name.");
+    Token methodName = parser->previous;
 
-  FunctionType type = TYPE_FUNCTION;
-  function(parser, type);
-  emitByte(parser, OP_METHOD);
+    FunctionType type = TYPE_FUNCTION;
+    Type *functionType = function(parser, type);
+    classCompiler->methods.data[classCompiler->methods.count].name = copyString(parser->vm, methodName.start, methodName.length);
+    classCompiler->methods.data[classCompiler->methods.count].type = functionType;
+    classCompiler->methods.data[classCompiler->methods.count].index = classCompiler->methods.count;
+    classCompiler->methods.count++;
+
+    emitByte(parser, OP_METHOD);
 }
 
 
@@ -856,7 +862,6 @@ static Type *dot(Parser *parser, bool canAssign) {
         printValue(OBJ_VAL(parser->prevType->name));
         return errorType(parser->vm);
     }
-    bool isMethod = false;
     uint8_t id;
     id = findPropertyId(parser, parser->previous, parser->prevType);
     if (id == 255) {
@@ -865,27 +870,29 @@ static Type *dot(Parser *parser, bool canAssign) {
             typeError(parser, "Unknown field or method.");
             return errorType(parser->vm);
         }
-    } else {
-        isMethod = true;
-    }
-    Type *expectedType = fields->fields.data[id].type;
-
-    if (canAssign && match(parser, TOKEN_EQUAL) && !isMethod) {
-        Type *valueType = expression(parser);
-
-        if (!typesEqual(valueType, expectedType)) {
-            typeMismatch(parser, expectedType, valueType, "field assignment");
+        Type *expectedType = fields->methods.data[id].type;
+        if (canAssign && match(parser, TOKEN_EQUAL)) {
+            typeError(parser, "Methods cannot be assigned.");
             return errorType(parser->vm);
-        } else {
-            emitBytes(parser, OP_SET_FIELD, id);
-            return parser->prevType;
         }
+        emitBytes(parser, OP_GET_METHOD, id);
+        return expectedType;
     } else {
-        if (isMethod) {
-            emitBytes(parser, OP_GET_METHOD, id);
-        } else {
-            emitBytes(parser, OP_GET_FIELD, id);
+        Type *expectedType = fields->fields.data[id].type;
+
+        if (canAssign && match(parser, TOKEN_EQUAL)) {
+            Type *valueType = expression(parser);
+
+            if (!typesEqual(valueType, expectedType)) {
+                typeMismatch(parser, expectedType, valueType, "field assignment");
+                return errorType(parser->vm);
+            } else {
+                emitBytes(parser, OP_SET_FIELD, id);
+                return parser->prevType;
+            }
         }
+
+        emitBytes(parser, OP_GET_FIELD, id);
         return expectedType;
     }
 }
@@ -1011,7 +1018,7 @@ static Type *class(Parser *parser, bool canAssign) {
             classCompiler.fields.count++;
         } else {
             consume(parser, TOKEN_DEF, "Expect field name or method definition in class body.");
-            method(parser);
+            method(parser, &classCompiler);
         }
     }
 

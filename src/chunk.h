@@ -18,6 +18,7 @@ typedef enum {
     OP_SET_UPVALUE,
     OP_CLOSE_UPVALUE,
     OP_GET_FIELD,
+    OP_GET_METHOD,
     OP_SET_FIELD,
     OP_EQUAL,
     OP_GREATER,

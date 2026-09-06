@@ -238,6 +238,10 @@ static bool callValue(VM *vm, Value callee, int argCount) {
             case OBJ_FUNCTION: {
                 return call(vm, AS_FUNCTION(callee), argCount);
             }
+            case OBJ_BOUND_METHOD: {
+                ObjBoundMethod *bound = AS_BOUND_METHOD(callee);
+                return call(vm, bound->method, argCount);
+            }
             case OBJ_NATIVE: {
                 ObjNative *native = AS_NATIVE(callee);
                 Value result;
@@ -257,6 +261,15 @@ static bool callValue(VM *vm, Value callee, int argCount) {
     }
     runtimeError(vm, "Can only call functions and classes.");
     return false;
+}
+
+static bool bindMethod(VM *vm, ObjClass* class, int id) {
+  Value method = class->methods.data[id];
+
+  ObjBoundMethod* bound = newBoundMethod(vm, peek(vm, 0), AS_FUNCTION(method));
+  pop(vm);
+  push(vm, OBJ_VAL(bound));
+  return true;
 }
 
 static ObjUpvalue *captureUpvalue(VM *vm, Value *local) {
@@ -377,6 +390,13 @@ static InterpretResult run(VM *vm) {
 
                 pop(vm);
                 push(vm, instance->fields[id]);
+                break;
+            }
+            case OP_GET_METHOD: {
+                ObjInstance *instance = AS_INSTANCE(peek(vm, 0));
+                uint8_t id = READ_BYTE();
+
+                bindMethod(vm, (ObjClass*)(instance->obj.class), id);
                 break;
             }
             case OP_SET_FIELD: {
