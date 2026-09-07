@@ -60,6 +60,7 @@ typedef struct { // Name fields so dynamic array can be swapped in easily.
 
 typedef enum {
     TYPE_FUNCTION,
+    TYPE_METHOD,
     TYPE_SCRIPT
 } FunctionType;
 
@@ -245,8 +246,12 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType t) {
     // Give the reserved slot a real type so markReplRoots can mark it safely.
     local->type = type(parser->vm, "Any - Init");
 
-    if (t != TYPE_SCRIPT) {
-        local->name = parser->previous;
+    if (t != TYPE_FUNCTION) {
+        local->name.start = "self";
+        local->name.length = 4;
+    } else {
+        local->name.start = "";
+        local->name.length = 0;
     }
 }
 
@@ -631,6 +636,15 @@ static Type *variable(Parser *parser, bool canAssign) {
     return namedVariable(parser, parser->previous, canAssign);
 }
 
+static Type *self(Parser *parser, bool canAssign) {
+    if (parser->currentClass == NULL) {
+        error(parser, "Can't use 'self' outside of a class.");
+        return errorType(parser->vm);
+    }
+
+    return variable(parser, false);
+} 
+
 // `outer x = expr` assigns to the nearest variable named `x` in an enclosing
 // function scope (an upvalue), Solace's analogue of Python's `nonlocal`:
 // it is the only path that writes through a captured upvalue. 
@@ -718,7 +732,7 @@ static void method(Parser *parser, ClassCompiler *classCompiler) {
     consume(parser, TOKEN_IDENTIFIER, "Expect method name.");
     Token methodName = parser->previous;
 
-    FunctionType type = TYPE_FUNCTION;
+    FunctionType type = TYPE_METHOD;
     Type *functionType = function(parser, type);
     classCompiler->methods.data[classCompiler->methods.count].name = copyString(parser->vm, methodName.start, methodName.length);
     classCompiler->methods.data[classCompiler->methods.count].type = functionType;
@@ -1076,7 +1090,7 @@ ParseRule rules[] = {
     [TOKEN_OUTER]         = {outerVariable, NULL,   PREC_NONE},
     [TOKEN_RETURN]        = {retExpr,       NULL,   PREC_NONE},
     [TOKEN_SUPER]         = {NULL,          NULL,   PREC_NONE},
-    [TOKEN_SELF]          = {NULL,          NULL,   PREC_NONE},
+    [TOKEN_SELF]          = {self,          NULL,   PREC_NONE},
     [TOKEN_TRUE]          = {literal,       NULL,   PREC_NONE},
     [TOKEN_WHILE]         = {whileExpr,     NULL,   PREC_NONE},
     [TOKEN_ERROR]         = {NULL,          NULL,   PREC_NONE},
@@ -1218,6 +1232,7 @@ ObjFunction *compileRepl(VM *vm, const char *source, int *baseSlots) {
     parser.vm = vm;
     parser.prevType = errorType(vm);
     parser.currentCompiler = replInitialized ? &replCompiler : NULL;
+    parser.currentClass = NULL;
     vm->parser = &parser;
 
     if (!replInitialized) {
