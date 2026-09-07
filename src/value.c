@@ -139,6 +139,8 @@ ObjClass *newClass(VM *vm, ObjString *name, int fieldCount) {
     ObjClass *class = ALLOCATE_OBJ(vm, ObjClass, OBJ_CLASS);
     class->name = name;
     class->fieldCount = fieldCount;
+    class->hasInitializer = false;
+    class->initializerId = 1;
     initValueArray(&class->methods);
     return class;
 }

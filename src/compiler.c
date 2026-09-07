@@ -61,7 +61,8 @@ typedef struct { // Name fields so dynamic array can be swapped in easily.
 typedef enum {
     TYPE_FUNCTION,
     TYPE_METHOD,
-    TYPE_SCRIPT
+    TYPE_SCRIPT,
+    TYPE_INITIALIZER
 } FunctionType;
 
 typedef struct {
@@ -90,6 +91,8 @@ typedef struct ClassCompiler {
     struct ClassCompiler *enclosing;
     FieldList fields;
     MethodList methods;
+    bool hasInitializer;
+    int initializerId;
 } ClassCompiler;
 
 typedef struct Parser {
@@ -670,7 +673,8 @@ static Type *outerVariable(Parser *parser, bool canAssign) {
     return existingType;
 }
 
-static Type *function(Parser *parser, FunctionType funType) {
+static Type *function(Parser *parser, FunctionType funType, int recursiveSlot) {
+    Compiler *outer = parser->currentCompiler;
     Compiler compiler;
     initCompiler(&compiler, parser, funType);
     parser->currentCompiler = &compiler;
@@ -710,10 +714,15 @@ static Type *function(Parser *parser, FunctionType funType) {
     Type *funcType = functionType(parser->vm, compiler.function->returnType,
                                  &compiler.function->paramaters);
     compiler.locals[0].type = funcType;
+    if (recursiveSlot >= 0) outer->locals[recursiveSlot].type = funcType;
 
     while (!check(parser, TOKEN_END) && !parser->hadError) {
         expression(parser);
         if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
+    }
+
+    if (parser->currentCompiler->type == TYPE_INITIALIZER) {
+        emitBytes(parser, OP_GET_LOCAL, 0); // Return `self` from an initializer, regardless of what the user wrote.
     }
     emitByte(parser, OP_RETURN);
 
@@ -733,7 +742,12 @@ static void method(Parser *parser, ClassCompiler *classCompiler) {
     Token methodName = parser->previous;
 
     FunctionType type = TYPE_METHOD;
-    Type *functionType = function(parser, type);
+    Type *functionType = function(parser, type, -1);
+    if (methodName.length == 4 && memcmp(methodName.start, "init", 4) == 0) {
+        classCompiler->hasInitializer = true;
+        classCompiler->initializerId = classCompiler->methods.count;
+        type = TYPE_INITIALIZER;
+    }
     classCompiler->methods.data[classCompiler->methods.count].name = copyString(parser->vm, methodName.start, methodName.length);
     classCompiler->methods.data[classCompiler->methods.count].type = functionType;
     classCompiler->methods.data[classCompiler->methods.count].index = classCompiler->methods.count;
@@ -796,11 +810,17 @@ static Type *retExpr(Parser *parser, bool canAssign) {
         return errorType(parser->vm);
     }
 
+    if (parser->currentCompiler->type == TYPE_INITIALIZER) {
+        error(parser, "Can't return a value from an initializer.");
+        return errorType(parser->vm);
+    }
+
     Type *valueType = expression(parser);
     Type *expected = parser->currentCompiler->function->returnType;
     if (!isSubtype(valueType, expected)) {
         typeMismatch(parser, expected, valueType, "return value");
     }
+
     emitByte(parser, OP_RETURN);
     return valueType;
 }
@@ -870,7 +890,7 @@ static Type *dot(Parser *parser, bool canAssign) {
 
     TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
     if (getTypeTable(parser->currentCompiler->types, parser->prevType, fields)) {
-
+        // fine
     } else {
         typeError(parser, "Only instances have fields.");
         printValue(OBJ_VAL(parser->prevType->name));
@@ -889,7 +909,13 @@ static Type *dot(Parser *parser, bool canAssign) {
             typeError(parser, "Methods cannot be assigned.");
             return errorType(parser->vm);
         }
-        emitBytes(parser, OP_GET_METHOD, id);
+
+        // if (match(parser, TOKEN_LEFT_PAREN)) {
+        //     uint8_t argCount = argumentList(parser);
+        //     emitBytes(parser, OP_INVOKE, id);
+        //     emitByte(parser, argCount);
+        // } else
+            emitBytes(parser, OP_GET_METHOD, id);
         return expectedType;
     } else {
         Type *expectedType = fields->fields.data[id].type;
@@ -987,13 +1013,11 @@ static Type *whileExpr(Parser *parser, bool canAssign) {
 
 static Type *funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
-    Compiler *outer = parser->currentCompiler;
 
     int slot = declareVariable(parser, parser->previous, type(parser->vm, "Any - Placeholder"));
-
-    Type *funcType = function(parser, TYPE_FUNCTION);
-    outer->locals[slot].type = funcType;
     markInitializedAt(parser, slot);
+
+    Type *funcType = function(parser, TYPE_FUNCTION, slot);
 
     emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
     return funcType;
@@ -1050,6 +1074,10 @@ static Type *class(Parser *parser, bool canAssign) {
     typeInfo.fields = classCompiler.fields;
     typeInfo.methods = classCompiler.methods;
     setTypeTable(parser->vm, parser->currentCompiler->types, classNameType, typeInfo);
+
+    if (classCompiler.hasInitializer) {
+        emitBytes(parser, OP_INITIALIZER, classCompiler.initializerId);
+    }
 
     parser->currentClass = parser->currentClass->enclosing;
     return classType;

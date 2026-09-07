@@ -91,8 +91,10 @@ typedef struct {
 
 typedef struct {
     Obj obj;
-    ObjString *name; 
+    ObjString *name;
     int fieldCount;
+    bool hasInitializer;
+    uint8_t initializerId;
     ValueArray methods;
 } ObjClass;
 

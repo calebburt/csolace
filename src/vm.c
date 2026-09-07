@@ -232,6 +232,15 @@ static bool call(VM *vm, ObjFunction *function, int argCount) {
     return true;
 }
 
+static bool bindMethod(VM *vm, ObjClass* class, int id) {
+  Value method = class->methods.data[id];
+
+  ObjBoundMethod* bound = newBoundMethod(vm, peek(vm, 0), AS_FUNCTION(method));
+  pop(vm);
+  push(vm, OBJ_VAL(bound));
+  return true;
+}
+
 static bool callValue(VM *vm, Value callee, int argCount) {
     if (IS_OBJ(callee)) {
         switch (OBJ_TYPE(callee)) {
@@ -254,6 +263,14 @@ static bool callValue(VM *vm, Value callee, int argCount) {
             case OBJ_CLASS: {
                 ObjClass* class = AS_CLASS(callee);
                 vm->stackTop[-argCount - 1] = OBJ_VAL(newInstance(vm, class));
+                if (class->hasInitializer) {
+                    ObjFunction *initializer = AS_FUNCTION(class->methods.data[class->initializerId]);
+                    return call(vm, initializer, argCount);
+                } else if (argCount != 0) {
+                    runtimeError(vm, "Expected 0 arguments but got %d.", argCount);
+                    return false;
+                }
+
                 return true;
             }
             default:
@@ -262,15 +279,6 @@ static bool callValue(VM *vm, Value callee, int argCount) {
     }
     runtimeError(vm, "Can only call functions and classes.");
     return false;
-}
-
-static bool bindMethod(VM *vm, ObjClass* class, int id) {
-  Value method = class->methods.data[id];
-
-  ObjBoundMethod* bound = newBoundMethod(vm, peek(vm, 0), AS_FUNCTION(method));
-  pop(vm);
-  push(vm, OBJ_VAL(bound));
-  return true;
 }
 
 static ObjUpvalue *captureUpvalue(VM *vm, Value *local) {
@@ -519,6 +527,12 @@ static InterpretResult run(VM *vm) {
             case OP_METHOD:
                 defineMethod(vm);
                 break;
+            case OP_INITIALIZER: {
+                ObjClass* class = AS_CLASS(peek(vm, 0));
+                class->hasInitializer = true;
+                class->initializerId = READ_BYTE();
+                break;
+            }
         }
     }
 
