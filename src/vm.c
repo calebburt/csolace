@@ -98,40 +98,44 @@ static bool inputNative(VM *vm, int argCount, Value *args, Value *out) {
 
 static bool sinNative(VM *vm, int argCount, Value *args, Value *out) {
     (void)vm; (void)argCount;
-    if (!IS_NUMBER(args[0])) {
-        runtimeError(vm, "sin() expects a Number.");
-        return false;
-    }
+    //unreachable
+    // if (!IS_NUMBER(args[0])) {
+    //     runtimeError(vm, "sin() expects a Number.");
+    //     return false;
+    // }
     *out = NUMBER_VAL(sin(AS_NUMBER(args[0])));
     return true;
 }
 
 static bool cosNative(VM *vm, int argCount, Value *args, Value *out) {
     (void)vm; (void)argCount;
-    if (!IS_NUMBER(args[0])) {
-        runtimeError(vm, "cos() expects a Number.");
-        return false;
-    }
+    //unreachable
+    // if (!IS_NUMBER(args[0])) {
+    //     runtimeError(vm, "cos() expects a Number.");
+    //     return false;
+    // }
     *out = NUMBER_VAL(cos(AS_NUMBER(args[0])));
     return true;
 }
 
 static bool tanNative(VM *vm, int argCount, Value *args, Value *out) {
     (void)vm; (void)argCount;
-    if (!IS_NUMBER(args[0])) {
-        runtimeError(vm, "tan() expects a Number.");
-        return false;
-    }
+    //unreachable
+    // if (!IS_NUMBER(args[0])) {
+    //     runtimeError(vm, "tan() expects a Number.");
+    //     return false;
+    // }
     *out = NUMBER_VAL(tan(AS_NUMBER(args[0])));
     return true;
 }
 
 static bool sqrtNative(VM *vm, int argCount, Value *args, Value *out) {
     (void)vm; (void)argCount;
-    if (!IS_NUMBER(args[0])) {
-        runtimeError(vm, "sqrt() expects a Number.");
-        return false;
-    }
+    //unreachable
+    // if (!IS_NUMBER(args[0])) {
+    //     runtimeError(vm, "sqrt() expects a Number.");
+    //     return false;
+    // }
     *out = NUMBER_VAL(sqrt(AS_NUMBER(args[0])));
     return true;
 }
@@ -214,10 +218,11 @@ static Value peek(VM *vm, int distance) {
 }
 
 static bool call(VM *vm, ObjFunction *function, int argCount) {
-    if (argCount != function->prototype->paramaters.count) {
-        runtimeError(vm, "Expected %d arguments but got %d.", function->prototype->paramaters.count, argCount);
-        return false;
-    }
+    //unreachable
+    // if (argCount != function->prototype->paramaters.count) {
+    //     runtimeError(vm, "Expected %d arguments but got %d.", function->prototype->paramaters.count, argCount);
+    //     return false;
+    // }
 
     if (vm->frameCount == FRAMES_MAX) {
         runtimeError(vm, "Stack overflow.");
@@ -266,10 +271,12 @@ static bool callValue(VM *vm, Value callee, int argCount) {
                 if (class->hasInitializer) {
                     ObjFunction *initializer = AS_FUNCTION(class->methods.data[class->initializerId]);
                     return call(vm, initializer, argCount);
-                } else if (argCount != 0) {
-                    runtimeError(vm, "Expected 0 arguments but got %d.", argCount);
-                    return false;
-                }
+                } 
+                //unreachable
+                // else if (argCount != 0) {
+                //     runtimeError(vm, "Expected 0 arguments but got %d.", argCount);
+                //     return false;
+                // }
 
                 return true;
             }
@@ -277,7 +284,8 @@ static bool callValue(VM *vm, Value callee, int argCount) {
                 break; // Non-callable object type
         }
     }
-    runtimeError(vm, "Can only call functions and classes.");
+    //unreachable
+    // runtimeError(vm, "Can only call functions and classes.");
     return false;
 }
 
@@ -448,8 +456,8 @@ static InterpretResult run(VM *vm) {
                     push(vm, NUMBER_VAL(a + b));
                 } else {
                     // unreachable
-                    runtimeError(vm, "Operands must be two numbers or two strings.");
-                    return INTERPRET_RUNTIME_ERROR;
+                    // runtimeError(vm, "Operands must be two numbers or two strings.");
+                    // return INTERPRET_RUNTIME_ERROR;
                 }
                 break;
             }

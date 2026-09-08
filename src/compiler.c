@@ -833,13 +833,26 @@ static Type *call(Parser *parser, bool canAssign) {
     Type *retSlot = NULL;
     Type *firstParamSlot = NULL;
     bool fnTyped = isFunctionType(*calleeType);
+    bool classTyped = isClassType(*calleeType);
     if (fnTyped) {
         if (calleeType->generics != NULL) {
             retSlot = calleeType->generics;
             firstParamSlot = retSlot->next;
         }
-    } else if (isClassType(*calleeType)) {
+    } else if (classTyped) {
         retSlot = calleeType->generics;
+        TypeInfo classInfo;
+        if (retSlot != NULL && getTypeTable(parser->currentCompiler->types, retSlot, &classInfo)) {
+            for (int i = 0; i < classInfo.methods.count; i++) {
+                Method *method = &classInfo.methods.data[i];
+                if (method->name->length == 4 && memcmp(method->name->chars, "init", 4) == 0) {
+                    if (method->type->generics != NULL) {
+                        firstParamSlot = method->type->generics->next;
+                    }
+                    break;
+                }
+            }
+        }
     } else if (!isErrorType(parser, calleeType)) {
         char buf[128], msg[256];
         formatType(calleeType, buf, sizeof(buf));
@@ -852,9 +865,10 @@ static Type *call(Parser *parser, bool canAssign) {
     if (!check(parser, TOKEN_RIGHT_PAREN)) {
         do {
             Type *argType = expression(parser);
-            if (fnTyped && paramSlot != NULL && paramSlot->generics != NULL) {
+            if ((fnTyped || classTyped) && paramSlot != NULL && paramSlot->generics != NULL) {
                 if (!isSubtype(argType, paramSlot->generics)) {
-                    typeMismatch(parser, paramSlot->generics, argType, "function argument");
+                    typeMismatch(parser, paramSlot->generics, argType,
+                                 classTyped ? "initializer argument" : "function argument");
                 }
                 paramSlot = paramSlot->next;
             }
@@ -864,12 +878,13 @@ static Type *call(Parser *parser, bool canAssign) {
     }
     consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
 
-    if (fnTyped) {
+    if (fnTyped || classTyped) {
         int paramCount = 0;
         for (Type *s = firstParamSlot; s != NULL; s = s->next) paramCount++;
         if (paramCount != argCount) {
             char msg[128];
-            snprintf(msg, sizeof(msg), "expected %d arguments, got %d", paramCount, argCount);
+            snprintf(msg, sizeof(msg), "expected %d %s, got %d", paramCount,
+                     classTyped ? "constructor arguments" : "arguments", argCount);
             typeError(parser, msg);
         }
     }
@@ -878,7 +893,7 @@ static Type *call(Parser *parser, bool canAssign) {
 
     if (fnTyped) {
         if (retSlot != NULL && retSlot->generics != NULL) return retSlot->generics;
-    } else if (isClassType(*calleeType)) {
+    } else if (classTyped) {
         if (retSlot != NULL) return retSlot;
     }
     return errorType(parser->vm);
