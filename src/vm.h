@@ -4,7 +4,6 @@
 #include "common.h"
 #include "chunk.h"
 #include "value.h"
-#include "table.h"
 #include "type.h"
 
 // The active compiler lives on the Parser (defined in compiler.c); the VM holds

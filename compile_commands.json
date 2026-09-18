@@ -1,0 +1,172 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/chunk.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/chunk.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/compiler.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/compiler.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/debug.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/debug.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/lexer.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/lexer.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/main.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/main.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/memory.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/memory.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/table.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/table.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/type.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/type.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/value.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/value.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  },
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-pedantic",
+      "-Wno-unused-parameter",
+      "-O2",
+      "-o",
+      "solace",
+      "src/vm.c"
+    ],
+    "directory": "/home/caleb/projects/csolace",
+    "file": "/home/caleb/projects/csolace/src/vm.c",
+    "output": "/home/caleb/projects/csolace/solace"
+  }
+]

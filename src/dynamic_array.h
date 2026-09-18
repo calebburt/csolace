@@ -1,7 +1,6 @@
 #ifndef SLC_DYNAMIC_ARRAY_H
 #define SLC_DYNAMIC_ARRAY_H
 
-#include "common.h"
 #include "memory.h"
 
 #define GROW_CAPACITY(capacity) ((capacity) < 8 ? 8 : (capacity) * 2)

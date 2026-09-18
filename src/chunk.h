@@ -1,7 +1,6 @@
 #ifndef SLC_CHUNK_H
 #define SLC_CHUNK_H
 
-#include "common.h"
 #include "dynamic_array.h"
 #include "value.h"
 
