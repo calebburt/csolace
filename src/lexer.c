@@ -107,7 +107,18 @@ static TokenType identifierType(Lexer *lexer) {
                 }
             }
             break;
-        case 'r': return checkKeyword(lexer, 1, 5, "eturn", TOKEN_RETURN);
+        case 'r': 
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'e': 
+                        if (lexer->current - lexer->start > 2) {
+                            switch (lexer->start[2]) {
+                                case 't': return checkKeyword(lexer, 3, 3, "urn", TOKEN_RETURN);
+                                case 'c': return checkKeyword(lexer, 3, 2, "ur", TOKEN_RECUR);
+                            }
+                        }
+                }
+            }
         case 's':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {

@@ -825,6 +825,10 @@ static Type *retExpr(Parser *parser, bool canAssign) {
     return valueType;
 }
 
+static Type *recurExpr(Parser *parser, bool canAssign) {
+    
+}
+
 static Type *call(Parser *parser, bool canAssign) {
     // Snapshot callee type before argumentList — expression() inside the loop
     // will clobber parser->prevType with each argument's type.
@@ -1132,6 +1136,7 @@ ParseRule rules[] = {
     [TOKEN_OR]            = {or_,           NULL,   PREC_NONE},
     [TOKEN_OUTER]         = {outerVariable, NULL,   PREC_NONE},
     [TOKEN_RETURN]        = {retExpr,       NULL,   PREC_NONE},
+    [TOKEN_RECUR]         = {recurExpr,     NULL,   PREC_NONE},
     [TOKEN_SUPER]         = {NULL,          NULL,   PREC_NONE},
     [TOKEN_SELF]          = {self,          NULL,   PREC_NONE},
     [TOKEN_TRUE]          = {literal,       NULL,   PREC_NONE},
