@@ -119,6 +119,7 @@ static TokenType identifierType(Lexer *lexer) {
                         }
                 }
             }
+            break;
         case 's':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {

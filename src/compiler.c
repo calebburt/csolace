@@ -5,6 +5,8 @@
 #include "type.h"
 #include "value.h"
 #include "vm.h"
+#include "table.h"
+#include "dynamic_array.h"
 #ifdef SLC_DEBUG
 #include "debug.h"
 #endif
@@ -70,6 +72,24 @@ typedef struct {
     MethodList methods;
 } TypeInfo;
 
+typedef struct {
+    int index;
+    // ...?
+} Patch;
+
+MAKE_DYNAMIC_ARRAY_H(Patch, PatchArray)
+MAKE_DYNAMIC_ARRAY(Patch, PatchArray)
+
+typedef struct {
+    Token name;
+    Type *type;
+    PatchArray patches;
+    bool active;
+} RecurEntry;
+
+MAKE_DYNAMIC_ARRAY_H(RecurEntry, RecurArray)
+MAKE_DYNAMIC_ARRAY(RecurEntry, RecurArray)
+
 MAKE_TABLE_H(TypeTable, TypeTableEntry, Type*, TypeInfo, hashType, typesEqual)
 MAKE_TABLE(TypeTable, TypeTableEntry, Type*, TypeInfo, hashType, typesEqual)
 
@@ -84,7 +104,9 @@ typedef struct Compiler {
 
     Upvalue upvalues[UINT8_COUNT];
 
-    TypeTable *types;
+    RecurArray recursions;
+
+    TypeTable types;
 } Compiler;
 
 typedef struct ClassCompiler {
@@ -234,8 +256,8 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType t) {
     compiler->type = t;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
-    compiler->types = ALLOCATE(parser->vm, TypeTable, 1);
-    initTypeTable(compiler->types);
+    initRecurArray(&compiler->recursions);
+    initTypeTable(&compiler->types);
 
     if (t != TYPE_SCRIPT) {
         compiler->function->name = copyString(parser->vm, parser->previous.start, parser->previous.length);
@@ -247,7 +269,7 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType t) {
     local->name.start = "";
     local->name.length = 0;
     // Give the reserved slot a real type so markReplRoots can mark it safely.
-    local->type = type(parser->vm, "Any - Init");
+    local->type = type(parser->vm, "Any");
 
     if (t != TYPE_FUNCTION) {
         local->name.start = "self";
@@ -401,6 +423,10 @@ static int resolveLocal(Parser *parser, Compiler *compiler, Token *name) {
             return i;
         }
     }
+    for (int j = compiler->recursions.count - 1; j >= 0; j--) {
+        RecurEntry entry = compiler->recursions.data[j];
+        
+    }
     return -1;
 }
 
@@ -457,7 +483,7 @@ static int resolveNative(Parser *parser, Token *name) {
 static uint8_t findPropertyId(Parser *parser, Token name, Type *type) {
     TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
     
-    if (getTypeTable(parser->currentCompiler->types, type, fields)) {
+    if (getTypeTable(&parser->currentCompiler->types, type, fields)) {
         for (int i = 0; i < fields->fields.count; i++) {
             Field *field = &fields->fields.data[i];
             if (name.length == field->name->length && memcmp(name.start, field->name->chars, name.length) == 0) {
@@ -473,7 +499,7 @@ static uint8_t findPropertyId(Parser *parser, Token name, Type *type) {
 static uint8_t findMethodId(Parser *parser, Token name, Type *type) {
     TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
     
-    if (getTypeTable(parser->currentCompiler->types, type, fields)) {
+    if (getTypeTable(&parser->currentCompiler->types, type, fields)) {
         for (int i = 0; i < fields->methods.count; i++) {
             Method *method = &fields->methods.data[i];
             if (name.length == method->name->length && memcmp(name.start, method->name->chars, name.length) == 0) {
@@ -601,7 +627,7 @@ static Type *namedVariable(Parser *parser, Token name, bool canAssign) {
             // Implicit declaration: type is inferred from the initializer, so
             // we declare with a neutral placeholder, evaluate, then patch the
             // slot's type. Declaring first still gives us the self-init check.
-            int slot = declareVariable(parser, name, type(parser->vm, "Any - Var"));
+            int slot = declareVariable(parser, name, type(parser->vm, "Any"));
             Type *valueType = expression(parser);
             setLocalType(parser, slot, valueType);
             markInitializedAt(parser, slot);
@@ -683,7 +709,7 @@ static Type *function(Parser *parser, FunctionType funType, int recursiveSlot) {
     consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after function name.");
     if (!check(parser, TOKEN_RIGHT_PAREN)) {
         do {
-            if (compiler.function->paramaters.count == UINT8_COUNT) {
+            if (compiler.function->parameters.count == UINT8_COUNT) {
                 error(parser, "Can't have more than 255 parameters.");
                 return errorType(parser->vm);
             }
@@ -694,13 +720,13 @@ static Type *function(Parser *parser, FunctionType funType, int recursiveSlot) {
             if (match(parser, TOKEN_COLON)) {
                 paramType = parseType(parser);
             } else {
-                paramType = type(parser->vm, "Any - Param");
+                paramType = type(parser->vm, "Any");
             }
 
             declareVariable(parser, paramName, paramType);
             markInitialized(parser);
 
-            appendTypeArray(parser->vm, &compiler.function->paramaters, paramType);
+            appendTypeArray(parser->vm, &compiler.function->parameters, paramType);
         } while (match(parser, TOKEN_COMMA));
     }
     consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
@@ -708,11 +734,11 @@ static Type *function(Parser *parser, FunctionType funType, int recursiveSlot) {
     if (match(parser, TOKEN_GREATER)) {
         compiler.function->returnType = parseType(parser);
     } else {
-        compiler.function->returnType = type(parser->vm, "Any - Return");
+        compiler.function->returnType = type(parser->vm, "Any");
     }
 
     Type *funcType = functionType(parser->vm, compiler.function->returnType,
-                                 &compiler.function->paramaters);
+                                 &compiler.function->parameters);
     compiler.locals[0].type = funcType;
     if (recursiveSlot >= 0) outer->locals[recursiveSlot].type = funcType;
 
@@ -826,7 +852,55 @@ static Type *retExpr(Parser *parser, bool canAssign) {
 }
 
 static Type *recurExpr(Parser *parser, bool canAssign) {
+    consume(parser, TOKEN_IDENTIFIER, "Expect function name after 'recur'.");
+    Token name = parser->previous;
+
+    consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+    TypeArray parameters;
+    initTypeArray(&parameters);
+
+    if (!check(parser, TOKEN_RIGHT_PAREN)) {
+        do {
+            if (parameters.count == UINT8_COUNT) {
+                error(parser, "Can't have more than 255 parameters.");
+                return errorType(parser->vm);
+            }
+            consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
+            Token paramName = parser->previous;
+
+            Type *paramType = NIL_TYPE;
+            if (match(parser, TOKEN_COLON)) {
+                paramType = parseType(parser);
+            } else {
+                paramType = type(parser->vm, "Any");
+            }
+
+            declareVariable(parser, paramName, paramType);
+            markInitialized(parser);
+
+            appendTypeArray(parser->vm, &parameters, paramType);
+        } while (match(parser, TOKEN_COMMA));
+    }
+    consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+
+    Type *returnType;
+    if (match(parser, TOKEN_GREATER)) {
+        returnType = parseType(parser);
+    } else {
+        returnType = type(parser->vm, "Any");
+    }
+
+    Type *funcType = functionType(parser->vm, returnType,
+                                 &parameters);
     
+    RecurEntry recurEntry;
+    recurEntry.name = name;
+    recurEntry.type = funcType;
+    recurEntry.active = true;
+    initPatchArray(&recurEntry.patches);
+    appendRecurArray(parser->vm, &parser->currentCompiler->recursions, recurEntry);
+
+    return NIL_TYPE;
 }
 
 static Type *call(Parser *parser, bool canAssign) {
@@ -846,7 +920,7 @@ static Type *call(Parser *parser, bool canAssign) {
     } else if (classTyped) {
         retSlot = calleeType->generics;
         TypeInfo classInfo;
-        if (retSlot != NULL && getTypeTable(parser->currentCompiler->types, retSlot, &classInfo)) {
+        if (retSlot != NULL && getTypeTable(&parser->currentCompiler->types, retSlot, &classInfo)) {
             for (int i = 0; i < classInfo.methods.count; i++) {
                 Method *method = &classInfo.methods.data[i];
                 if (method->name->length == 4 && memcmp(method->name->chars, "init", 4) == 0) {
@@ -908,13 +982,12 @@ static Type *dot(Parser *parser, bool canAssign) {
     
 
     TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
-    if (getTypeTable(parser->currentCompiler->types, parser->prevType, fields)) {
-        // fine
-    } else {
-        typeError(parser, "Only instances have fields.");
+    if (!getTypeTable(&parser->currentCompiler->types, parser->prevType, fields)) {
+        typeError(parser, "Only instances have fields."); // TODO: Change error message, because anything can have fields.
         printValue(OBJ_VAL(parser->prevType->name));
         return errorType(parser->vm);
     }
+    
     uint8_t id;
     id = findPropertyId(parser, parser->previous, parser->prevType);
     if (id == 255) {
@@ -1033,7 +1106,7 @@ static Type *whileExpr(Parser *parser, bool canAssign) {
 static Type *funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
 
-    int slot = declareVariable(parser, parser->previous, type(parser->vm, "Any - Placeholder"));
+    int slot = declareVariable(parser, parser->previous, type(parser->vm, "Any"));
     markInitializedAt(parser, slot);
 
     Type *funcType = function(parser, TYPE_FUNCTION, slot);
@@ -1092,7 +1165,7 @@ static Type *class(Parser *parser, bool canAssign) {
     TypeInfo typeInfo;
     typeInfo.fields = classCompiler.fields;
     typeInfo.methods = classCompiler.methods;
-    setTypeTable(parser->vm, parser->currentCompiler->types, classNameType, typeInfo);
+    setTypeTable(parser->vm, &parser->currentCompiler->types, classNameType, typeInfo);
 
     if (classCompiler.hasInitializer) {
         emitBytes(parser, OP_INITIALIZER, classCompiler.initializerId);

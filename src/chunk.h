@@ -63,7 +63,7 @@ struct ObjPrototype {
     Obj obj;
     Chunk chunk;
     ObjString *name;
-    TypeArray paramaters;
+    TypeArray parameters;
     Type *returnType;
     int upvalueCount;
 };

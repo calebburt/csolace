@@ -160,7 +160,7 @@ ObjFunction *newFunction(VM *vm, ObjPrototype *prototype) {
 
 ObjPrototype *newPrototype(VM *vm) {
     ObjPrototype *prototype = ALLOCATE_OBJ(vm, ObjPrototype, OBJ_PROTOTYPE);
-    initTypeArray(&prototype->paramaters);
+    initTypeArray(&prototype->parameters);
     prototype->name = NULL;
     prototype->upvalueCount = 0;
     initChunk(&prototype->chunk);
@@ -247,7 +247,7 @@ void freeObject(VM *vm, Obj *object) {
         case OBJ_PROTOTYPE: {
             ObjPrototype *prototype = (ObjPrototype*)object;
             freeChunk(vm, &prototype->chunk);
-            freeTypeArray(vm, &prototype->paramaters);
+            freeTypeArray(vm, &prototype->parameters);
             FREE(vm, ObjPrototype, object);
             break;
         }
