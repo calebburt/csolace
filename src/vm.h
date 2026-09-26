@@ -43,8 +43,9 @@ typedef struct VM {
     size_t nextGC;
     // Collection is only safe once execution begins. The type checker allocates
     // ObjStrings that live solely as Type values on the C stack (unreachable by
-    // the collector), so GC must stay off during init and compilation. interpret()
-    // flips this true right before run(), when every live object is rooted.
+    // the collector), so GC must stay off during init and compilation. The
+    // interpret() entry points flip this true right before run(), when every
+    // live object is rooted.
     bool canGC;
 
     // Non-NULL only while compile() is running; lets markCompilerRoots() walk
@@ -67,11 +68,21 @@ typedef enum {
     INTERPRET_RUNTIME_ERROR
 } InterpretResult;
 
+// Called with the freshly compiled prototype, after a successful compile and
+// before execution starts. Lets a caller inspect or persist the prototype (the
+// --dump flag writes it out as JSON) without the VM knowing about files. Return
+// false to abort interpretation.
+typedef bool (*PrototypeHook)(VM *vm, ObjPrototype *prototype, void *context);
+
 void initVM(VM *vm);
 void freeVM(VM *vm);
 
-InterpretResult interpret(VM *vm, const char *source);
+// Compile `source` and run it. `hook`/`context` are optional (see PrototypeHook).
+InterpretResult interpret(VM *vm, const char *source, PrototypeHook hook, void *context);
 InterpretResult interpretRepl(VM *vm, const char *source);
+
+// Run a pre-compiled prototype tree (loaded from bytecode) as the entry frame.
+InterpretResult runBytecode(VM *vm, ObjPrototype *prototype, const char *source);
 
 void push(VM *vm, Value value);
 Value pop(VM *vm);

@@ -552,15 +552,10 @@ static InterpretResult run(VM *vm) {
 #undef BINARY_OP
 }
 
-InterpretResult interpret(VM *vm, const char *source) {
-    resetStack(vm);
-    // Keep GC off through compilation; the type checker leaves transient
-    // ObjStrings unrooted on the C stack. Re-armed below, before execution.
-    vm->canGC = false;
-
-    ObjPrototype *prototype = compile(vm, source);
-    if (prototype == NULL) return INTERPRET_COMPILE_ERROR;
-
+// Enter `prototype` as the entry frame and run to completion. GC stays off while
+// the function object is built, then run() is entered with everything rooted.
+static InterpretResult runPrototype(VM *vm, ObjPrototype *prototype,
+                                    const char *source) {
     vm->source = (char*)source;
 
     push(vm, OBJ_VAL(prototype));
@@ -573,7 +568,30 @@ InterpretResult interpret(VM *vm, const char *source) {
     return run(vm);
 }
 
-// Compile and run a single REPL line against a persistent top-level scope.
+InterpretResult interpret(VM *vm, const char *source, PrototypeHook hook, void *context) {
+    resetStack(vm);
+    // Keep GC off through compilation; the type checker leaves transient
+    // ObjStrings unrooted on the C stack. Re-armed in runPrototype().
+    vm->canGC = false;
+
+    ObjPrototype *prototype = compile(vm, source);
+    if (prototype == NULL) return INTERPRET_COMPILE_ERROR;
+
+    if (hook != NULL && !hook(vm, prototype, context)) return INTERPRET_COMPILE_ERROR;
+
+    return runPrototype(vm, prototype, source);
+}
+
+// Run a prototype tree that was loaded from bytecode rather than compiled from
+// source. Same execution half as interpret(), minus the compile step: GC stays
+// off while the loader builds objects, then everything is rooted.
+InterpretResult runBytecode(VM *vm, ObjPrototype *prototype, const char *source) {
+    resetStack(vm);
+    vm->canGC = false;
+
+    return runPrototype(vm, prototype, source);
+}
+
 // Unlike interpret(), this does NOT reset the stack: locals declared on earlier
 // lines stay on the operand stack and remain addressable. compileRepl() reuses
 // one long-lived compiler (so name/type resolution sees prior locals) and tells
