@@ -69,7 +69,9 @@ static TokenType checkKeyword(Lexer *lexer, int start, int length,
     return TOKEN_IDENTIFIER;
 }
 
+// Find out what token type should be emitted for the identifier.
 static TokenType identifierType(Lexer *lexer) {
+    // Keywords are stored in the following trie:
     switch (lexer->start[0]) {
         case 'a': return checkKeyword(lexer, 1, 2, "nd", TOKEN_AND);
         case 'c': return checkKeyword(lexer, 1, 4, "lass", TOKEN_CLASS);
@@ -90,7 +92,14 @@ static TokenType identifierType(Lexer *lexer) {
                 }
             }
             break;
-        case 'i': return checkKeyword(lexer, 1, 1, "f", TOKEN_IF);
+        case 'i': 
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'f': return checkKeyword(lexer, 2, 0, "", TOKEN_IF);
+                    case 'm': return checkKeyword(lexer, 2, 4, "port", TOKEN_IMPORT);
+                }
+            }
+            break;
         case 'n':
             if (lexer->current - lexer->start > 1) {
                 switch (lexer->start[1]) {
@@ -135,13 +144,14 @@ static TokenType identifierType(Lexer *lexer) {
     return TOKEN_IDENTIFIER;
 }
 
+// Skip whitespace and comments.
 static void skipWhitespace(Lexer *lexer) {
     while (true) {
         char c = peek(lexer);
         switch (c) {
             case '\n':
                 lexer->line++;
-                __attribute__((fallthrough));
+                __attribute__((fallthrough)); // Also consume the newline character.
             case ' ':
             case '\r':
             case '\t':
@@ -185,6 +195,7 @@ static Token identifier(Lexer *lexer) {
     return makeToken(lexer, identifierType(lexer));
 }
 
+// Scan a single token, and return it. The loop, unlike most language implementations, is in the compiler, or other caller.
 Token scanToken(Lexer *lexer) {
     skipWhitespace(lexer);
     lexer->start = lexer->current;
