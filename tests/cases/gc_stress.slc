@@ -1,0 +1,28 @@
+# Recursion that allocates on every step, long enough to force many collections
+# while classes, their type tables, and the stack are all live.
+class Tree
+  depth: Number
+
+  def init(d: Number) > Nil
+    self.depth = d
+  end
+
+  def total() > Number
+    if self.depth <= 0
+      1
+    else
+      child = Tree(self.depth - 1)
+      child.total() + child.total()
+    end
+  end
+end
+
+t = Tree(12)
+i = 0
+acc = 0
+while i < 60
+  acc = acc + t.total()
+  i = i + 1
+end
+
+print(acc)

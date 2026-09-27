@@ -1,0 +1,7 @@
+class M
+  recur helper(n: Number) > Number
+
+  def run(n: Number) > Number
+    n
+  end
+end

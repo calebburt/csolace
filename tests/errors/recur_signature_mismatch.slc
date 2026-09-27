@@ -1,0 +1,5 @@
+recur f(n: Number) > Number
+def f(n: String) > Number
+  1
+end
+print(f("x"))

@@ -1,0 +1,6 @@
+x = 1
+if x > 100
+end
+while false
+end
+print(x)

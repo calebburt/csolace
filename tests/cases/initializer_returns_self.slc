@@ -1,0 +1,17 @@
+class Counter
+  count: Number
+
+  def init(start: Number) > Nil
+    self.count = start
+  end
+
+  def add(n: Number) > Number
+    self.count = self.count + n
+    self.count
+  end
+end
+
+c = Counter(0)
+c.add(5)
+print(c.count)
+print(c.add(3))

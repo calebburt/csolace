@@ -1,0 +1,113 @@
+# Interpreter profile for `make prof`.
+#
+# gprof is only worth reading when the run spends its time in a handful of hot
+# functions, so this walks the whole VM once per phase -- bytecode dispatch,
+# arithmetic, comparisons, local and upvalue access, calls and returns, field
+# access, instance allocation, the collector -- instead of spinning on a single
+# opcode the way a bare `while` does. A profile that only measures one opcode
+# says more about the workload than about the VM.
+#
+# Two rules keep it honest:
+#
+#   * the hot phases print nothing, so the samples land in the interpreter
+#     rather than in stdio;
+#   * every phase runs in the base frame. Nothing here recurses deeply or piles
+#     up operand stack slots, so a "Stack overflow." from this script is a
+#     codegen bug and not a heavy workload. `arith` and `bump` run millions of
+#     iterations, comfortably past the point where a block value that leaks one
+#     slot per execution would exhaust a fixed 1M-slot stack.
+
+def fib(n: Number) > Number
+  if n < 2
+    n
+  else
+    fib(n - 1) + fib(n - 2)
+  end
+end
+
+# Field access, method dispatch and instance allocation. `total` walks the chain
+# recursively so the profile shows the tight loop and the call-heavy path side by
+# side.
+class Cell
+  value: Number
+  next: Cell
+
+  def init(v: Number) > Nil
+    self.value = v
+    nil
+  end
+
+  def bump() > Number
+    self.value = self.value + 1
+    self.value
+  end
+
+  def total() > Number
+    if self.next == nil
+      self.value
+    else
+      self.value + self.next.total()
+    end
+  end
+end
+
+def chain(count: Number) > Cell
+  i = 0
+  head = Cell(0)
+  tail = head
+  while i < count - 1
+    i = i + 1
+    cell = Cell(i)
+    tail.next = cell
+    tail = cell
+  end
+  head
+end
+
+# `factor` and `walk` are both closures over `n`, so this phase is upvalue reads
+# rather than locals.
+def scaled(n: Number) > Number
+  def factor(x: Number) > Number
+    x * 3 + n
+  end
+  def walk(k: Number) > Number
+    if k <= 0
+      n
+    else
+      factor(k) + walk(k - 1)
+    end
+  end
+  walk(n)
+end
+
+# The phase that should come out flat and dominated by run(): nothing but
+# dispatch, locals, arithmetic and branches.
+def arith(n: Number) > Number
+  acc = 0
+  i = 0
+  while i < n
+    acc = acc + i * 3 - 1
+    if acc > 4000000
+      acc = acc - 4000000
+    end
+    i = i + 1
+  end
+  acc
+end
+
+list = chain(20000)
+scaled(20000)
+arith(20000000)
+fib(25)
+
+# Field writes through a method, in a loop, after the chain is live so the
+# collector has to trace it.
+i = 0
+while i < 20000
+  list.bump()
+  i = i + 1
+end
+
+# Keep the phases from being optimised away and show that the phases agree.
+print(arith(10))
+print(list.total())

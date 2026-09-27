@@ -1,0 +1,27 @@
+# A block that is not the last statement in its scope has to leave the stack
+# exactly where it started, whether it yields a value or Nil (no `else`).
+def trailing(n: Number) > Number
+  if n > 10
+    100
+  end
+  n
+end
+
+def lastStatement(n: Number) > Number
+  if n > 0
+    if n > 10
+      1
+    else
+      2
+    end
+    n
+  else
+    0
+  end
+end
+
+print(trailing(50))
+print(trailing(1))
+print(lastStatement(50))
+print(lastStatement(5))
+print(lastStatement(0))

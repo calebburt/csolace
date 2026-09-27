@@ -16,6 +16,49 @@ static void resetStack(VM *vm) {
     vm->openUpvalues = NULL;
 }
 
+// Grow the operand stack, re-basing every pointer cached into the old block:
+// each live frame's `slots` and every open upvalue's `location`. Returns false
+// once STACK_HARD_MAX is reached, leaving the stack exactly as it was.
+static bool growStack(VM *vm) {
+    if (vm->stackCapacity >= STACK_HARD_MAX) return false;
+
+    int oldCapacity = vm->stackCapacity;
+    int newCapacity = oldCapacity < STACK_MAX ? STACK_MAX : oldCapacity * 2;
+    if (newCapacity > STACK_HARD_MAX) newCapacity = STACK_HARD_MAX;
+
+    Value *old = vm->stack;
+    Value *fresh = reallocate(vm, old, sizeof(Value) * oldCapacity,
+                             sizeof(Value) * newCapacity);
+    if (fresh == NULL) {
+        fprintf(stderr, "Out of memory growing the stack.\n");
+        exit(71);
+    }
+
+    vm->stack = fresh;
+    vm->stackCapacity = newCapacity;
+    vm->stackTop = fresh + (vm->stackTop - old);
+    for (int i = 0; i < vm->frameCount; i++) {
+        vm->frames[i].slots = fresh + (vm->frames[i].slots - old);
+    }
+    for (ObjUpvalue *upvalue = vm->openUpvalues; upvalue != NULL; upvalue = upvalue->next) {
+        upvalue->location = fresh + (upvalue->location - old);
+    }
+    return true;
+}
+
+static void growFrames(VM *vm) {
+    int oldCapacity = vm->frameCapacity;
+    int newCapacity = oldCapacity < FRAMES_MAX ? FRAMES_MAX : oldCapacity * 2;
+    if (newCapacity > FRAMES_HARD_MAX) newCapacity = FRAMES_HARD_MAX;
+    vm->frames = reallocate(vm, vm->frames, sizeof(CallFrame) * oldCapacity,
+                            sizeof(CallFrame) * newCapacity);
+    if (vm->frames == NULL) {
+        fprintf(stderr, "Out of memory growing the frame array.\n");
+        exit(71);
+    }
+    vm->frameCapacity = newCapacity;
+}
+
 char* getLineOfString(VM *vm, const char* str, int lineNo) {
     if (lineNo < 1) return NULL;
 
@@ -162,6 +205,13 @@ static void defineBuiltinNatives(VM *vm) {
 }
 
 void initVM(VM *vm) {
+    vm->stack = NULL;
+    vm->stackCapacity = 0;
+    vm->stackTop = NULL;
+    vm->frames = NULL;
+    vm->frameCapacity = 0;
+    vm->frameCount = 0;
+    vm->openUpvalues = NULL;
     vm->chunk = NULL;
     vm->objects = NULL;
     vm->parser = NULL;
@@ -171,6 +221,8 @@ void initVM(VM *vm) {
     vm->grayStack = NULL;
     vm->nextGC = 1024 * 1024;
     vm->canGC = false;
+    growStack(vm);
+    growFrames(vm);
     resetStack(vm);
     defineBuiltinNatives(vm);
 }
@@ -197,6 +249,8 @@ void defineNative(VM *vm, const char *name, NativeFn fn,
 
 void freeVM(VM *vm) {
     freeObjects(vm, vm->objects);
+    FREE_ARRAY(vm, CallFrame, vm->frames, vm->frameCapacity);
+    FREE_ARRAY(vm, Value, vm->stack, vm->stackCapacity);
     // Free all the native types
     for (int i = 0; i < vm->nativeCount; i++) {
         freeType(vm, vm->nativeTypes[i]);
@@ -204,6 +258,13 @@ void freeVM(VM *vm) {
 }
 
 void push(VM *vm, Value value) {
+    if (vm->stackTop == vm->stack + vm->stackCapacity &&
+        !growStack(vm)) {
+        // The hard cap leaves nowhere to put this value, and the interpreter
+        // has no way to unwind from here, so report and stop.
+        runtimeError(vm, "Stack overflow.");
+        exit(70);
+    }
     *vm->stackTop = value;
     vm->stackTop++;
 }
@@ -224,9 +285,12 @@ static bool call(VM *vm, ObjFunction *function, int argCount) {
     //     return false;
     // }
 
-    if (vm->frameCount == FRAMES_MAX) {
-        runtimeError(vm, "Stack overflow.");
-        return false;
+    if (vm->frameCount == vm->frameCapacity) {
+        if (vm->frameCapacity >= FRAMES_HARD_MAX) {
+            runtimeError(vm, "Stack overflow.");
+            return false;
+        }
+        growFrames(vm);
     }
 
     CallFrame *frame = &vm->frames[vm->frameCount++];
@@ -402,6 +466,13 @@ static InterpretResult run(VM *vm) {
                 break;
             }
             case OP_GET_FIELD: {
+                // Fields only exist on instances, and the field id is baked in
+                // at compile time, so a non-instance has to be rejected here
+                // rather than by indexing into NULL.
+                if (!IS_INSTANCE(peek(vm, 0))) {
+                    runtimeError(vm, "Only instances have fields.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
                 ObjInstance *instance = AS_INSTANCE(peek(vm, 0));
                 uint8_t id = READ_BYTE();
 
@@ -410,6 +481,10 @@ static InterpretResult run(VM *vm) {
                 break;
             }
             case OP_GET_METHOD: {
+                if (!IS_INSTANCE(peek(vm, 0))) {
+                    runtimeError(vm, "Only instances have methods.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
                 ObjInstance *instance = AS_INSTANCE(peek(vm, 0));
                 uint8_t id = READ_BYTE();
 
@@ -417,6 +492,10 @@ static InterpretResult run(VM *vm) {
                 break;
             }
             case OP_SET_FIELD: {
+                if (!IS_INSTANCE(peek(vm, 1))) {
+                    runtimeError(vm, "Only instances have fields.");
+                    return INTERPRET_RUNTIME_ERROR;
+                }
                 ObjInstance *instance = AS_INSTANCE(peek(vm, 1));
                 uint8_t id = READ_BYTE();
                 Value value = pop(vm);

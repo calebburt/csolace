@@ -1,0 +1,15 @@
+def classify(n: Number) > String
+  if n > 0
+    if n > 10
+      "big"
+    else
+      "small"
+    end
+  else
+    "zero or less"
+  end
+end
+
+print(classify(50))
+print(classify(5))
+print(classify(-1))

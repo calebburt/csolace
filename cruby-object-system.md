@@ -4,7 +4,7 @@
 
 ## The Foundation: `VALUE`
 
-Everything in Ruby is a `VALUE` — an unsigned integer the width of a pointer:
+Everything in Ruby is a `VALUE` - an unsigned integer the width of a pointer:
 
 ```c
 // include/ruby/internal/value.h
@@ -12,7 +12,7 @@ typedef unsigned long VALUE;    // 8 bytes on 64-bit
 typedef unsigned long ID;
 ```
 
-It's NOT a pointer — it's a tagged integer that encodes either an **immediate value** (small int, symbol, true/false/nil, small float) or a **pointer to a heap-allocated struct**.
+It's NOT a pointer - it's a tagged integer that encodes either an **immediate value** (small int, symbol, true/false/nil, small float) or a **pointer to a heap-allocated struct**.
 
 ---
 
@@ -38,7 +38,7 @@ enum ruby_special_consts {
 
 | Low-bit pattern | Type | Encoding |
 |---|---|---|
-| `xxxxxxx1` | **Fixnum** | `(long << 1) \| 1` — arithmetic shift right by 1 to decode |
+| `xxxxxxx1` | **Fixnum** | `(long << 1) \| 1` - arithmetic shift right by 1 to decode |
 | `xxxxxx10` | **Flonum** | IEEE 754 bits rotated left by 3, low 2 bits set to `10` |
 | `xxxx1100` | **Static Symbol** | `(ID << 8) \| 0x0c` |
 | `0x00` | **false** | Singleton |
@@ -55,7 +55,7 @@ static inline VALUE RB_INT2FIX(long i) {
 // Decode: long = (SIGNED_VALUE)v >> 1   (arithmetic shift)
 ```
 
-Fixnums cover `LONG_MIN/2` to `LONG_MAX/2` — on 64-bit that's ±4.6 × 10^18.
+Fixnums cover `LONG_MIN/2` to `LONG_MAX/2` - on 64-bit that's ±4.6 × 10^18.
 
 **Flonum encoding** (64-bit only): Doubles whose exponent bits 62–60 are `011` or `100` (covers roughly ±1.72×10⁻⁷⁷ to ±1.84×10⁷⁷) are bit-rotated and tagged inline. Others fall through to a heap-allocated `RFloat`.
 
@@ -104,7 +104,7 @@ For heap objects, the type is extracted from the flags: `RBASIC(obj)->flags & 0x
 
 ---
 
-## `RBasic` — The Header Every Heap Object Shares
+## `RBasic` - The Header Every Heap Object Shares
 
 ```c
 // include/ruby/internal/core/rbasic.h
@@ -151,7 +151,7 @@ Bits 32–63 hold the **shape ID** (see below).
 
 ---
 
-## `RObject` — Generic Ruby Objects
+## `RObject` - Generic Ruby Objects
 
 ```c
 // include/ruby/internal/core/robject.h
@@ -206,11 +206,11 @@ enum shape_type {
 };
 ```
 
-When you do `obj.@x = 1; obj.@y = 2`, the object transitions through shapes: root → shape(@x, index=0) → shape(@y, index=1). The `fields` array stores values at the index dictated by the shape tree. No hash table lookup needed for ivar access — it's an array index.
+When you do `obj.@x = 1; obj.@y = 2`, the object transitions through shapes: root → shape(@x, index=0) → shape(@y, index=1). The `fields` array stores values at the index dictated by the shape tree. No hash table lookup needed for ivar access - it's an array index.
 
 ---
 
-## `RClass` — Classes and Modules
+## `RClass` - Classes and Modules
 
 The public header is opaque. The real definition is internal:
 
@@ -272,7 +272,7 @@ struct RClass_and_rb_classext_t {
 ```c
 // include/ruby/internal/core/rstring.h
 enum ruby_rstring_flags {
-    RSTRING_NOEMBED = RUBY_FL_USER1,   // NOT embedded — data on heap
+    RSTRING_NOEMBED = RUBY_FL_USER1,   // NOT embedded - data on heap
     RSTRING_FSTR    = RUBY_FL_USER17   // frozen interned string
 };
 
@@ -340,7 +340,7 @@ struct RFloat {
 };
 ```
 
-Most floats never reach `RFloat` — they're encoded as flonums. Only out-of-range doubles (very large/small exponents, NaN, -0.0) get heap-allocated.
+Most floats never reach `RFloat` - they're encoded as flonums. Only out-of-range doubles (very large/small exponents, NaN, -0.0) get heap-allocated.
 
 ---
 
@@ -500,7 +500,7 @@ VALUE (64 bits)
      └──────────────────┘
 ```
 
-The key insight: Ruby's object model is a **tagged pointer** scheme where common small values avoid heap allocation entirely, and heap objects all share a uniform 16-byte header (`RBasic`) whose flag bits encode the type, GC state, frozen status, and (on 64-bit) the shape ID — enabling O(1) instance variable access through the shape tree instead of hash table lookups.
+The key insight: Ruby's object model is a **tagged pointer** scheme where common small values avoid heap allocation entirely, and heap objects all share a uniform 16-byte header (`RBasic`) whose flag bits encode the type, GC state, frozen status, and (on 64-bit) the shape ID - enabling O(1) instance variable access through the shape tree instead of hash table lookups.
 
 ---
 
@@ -508,7 +508,7 @@ The key insight: Ruby's object model is a **tagged pointer** scheme where common
 
 ## The Core Idea: A Linked List of Method Tables
 
-The entire class hierarchy is a **singly-linked list** connected by `super` pointers. Method lookup is a linear walk of this list. Everything else — `include`, `prepend`, singleton classes — is implemented by **inserting proxy nodes** (IClasses) into this list.
+The entire class hierarchy is a **singly-linked list** connected by `super` pointers. Method lookup is a linear walk of this list. Everything else - `include`, `prepend`, singleton classes - is implemented by **inserting proxy nodes** (IClasses) into this list.
 
 ---
 
@@ -574,9 +574,9 @@ Each node has an `m_tbl` (an `rb_id_table` mapping method name IDs to `rb_method
 
 ---
 
-## 3. `include` — Inserting IClasses
+## 3. `include` - Inserting IClasses
 
-When you `include` a module, CRuby creates a **T_ICLASS** (inclusion class) — a transparent proxy that **shares the module's method table pointer**:
+When you `include` a module, CRuby creates a **T_ICLASS** (inclusion class) - a transparent proxy that **shares the module's method table pointer**:
 
 ```c
 VALUE
@@ -608,11 +608,11 @@ Dog --super--> ICLASS(Swimmable) --super--> ICLASS(Walkable) --super--> Animal -
 
 Because the ICLASS **shares** the module's `m_tbl` pointer (not a copy), adding a method to `Walkable` later is immediately visible through the ICLASS.
 
-The insertion logic (`do_include_modules_at`) checks for duplicates by comparing `m_tbl` pointers — if an ICLASS for that module already exists in the chain, it skips it.
+The insertion logic (`do_include_modules_at`) checks for duplicates by comparing `m_tbl` pointers - if an ICLASS for that module already exists in the chain, it skips it.
 
 ---
 
-## 4. `prepend` — The Origin Trick
+## 4. `prepend` - The Origin Trick
 
 `prepend` must insert methods **before** the class's own methods. This requires a clever restructuring:
 
@@ -702,7 +702,7 @@ This is why class methods are inherited: `Dog.some_class_method` walks Dog's met
 
 ---
 
-## 6. The `superclasses` Array — O(1) `is_a?`
+## 6. The `superclasses` Array - O(1) `is_a?`
 
 Walking the super chain for `is_a?` would be O(n). CRuby caches a **linearized array** of `T_CLASS` ancestors (skipping IClasses):
 
@@ -752,7 +752,7 @@ Used for:
 
 ---
 
-## 8. `Module#ancestors` — Reading the Chain
+## 8. `Module#ancestors` - Reading the Chain
 
 ```c
 VALUE rb_mod_ancestors(VALUE mod)
@@ -873,4 +873,4 @@ obj.klass
   nil
 ```
 
-Every box is a `struct RClass` (or `T_ICLASS`) with an `m_tbl`. Method dispatch is just: walk down, check each `m_tbl`, return the first hit. Everything else — mixins, prepends, singleton methods — is just creative insertion of nodes into this linked list.
+Every box is a `struct RClass` (or `T_ICLASS`) with an `m_tbl`. Method dispatch is just: walk down, check each `m_tbl`, return the first hit. Everything else - mixins, prepends, singleton methods - is just creative insertion of nodes into this linked list.

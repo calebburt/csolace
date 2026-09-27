@@ -1,0 +1,19 @@
+recur isOdd(n: Number) > Boolean
+def isEven(n: Number) > Boolean
+  if n == 0
+    true
+  else
+    isOdd(n - 1)
+  end
+end
+
+def isOdd(n: Number) > Boolean
+  if n == 0
+    false
+  else
+    isEven(n - 1)
+  end
+end
+
+print(isEven(10))
+print(isOdd(10))

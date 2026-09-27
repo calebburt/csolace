@@ -1,0 +1,21 @@
+class List
+  value: Number
+  next: List
+
+  def init(v: Number) > Nil
+    self.value = v
+  end
+
+  def sum() > Number
+    if self.next == nil
+      self.value
+    else
+      self.value + self.next.sum()
+    end
+  end
+end
+
+a = List(1)
+a.next = List(2)
+a.next.next = List(3)
+print(a.sum())

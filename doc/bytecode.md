@@ -9,7 +9,7 @@ solace hello.slc.slb        # run the dumped bytecode directly
 ```
 
 The format is a JSON mirror of the interpreter's own in-memory structures. The
-bytecode itself is just a list of integers — byte-for-byte the same bytes the
+bytecode itself is just a list of integers - byte-for-byte the same bytes the
 VM executes. Because it is plain JSON, any language with a JSON library (Python,
 Ruby, and eventually Solace itself) can produce or consume `.slb` files.
 
@@ -41,7 +41,7 @@ obj = { "type": <ObjType>, ... }    (mirrors Obj)
 A `.slb` file also carries `"version": 1` at the root; the loader refuses to
 run any other version. This ensures forward-compatibility.
 
-## `code` — the bytecode list
+## `code` - the bytecode list
 
 Each entry is one instruction byte (0–255) of the VM's opcode set, in order.
 Operands are inline, exactly as the interpreter stores them.
@@ -64,7 +64,7 @@ function value  = {"type": 3, "obj": <prototype as nested object>}
 
 ValueType is 0 VAL_BOOL, 1 VAL_NIL, 2 VAL_NUMBER, 3 VAL_OBJ. ObjType is 3
 OBJ_STRING and 7 OBJ_PROTOTYPE. Classes come from `OP_CLASS` (name constant)
-plus `OP_METHOD` calls, so they need no representation of their own — only the
+plus `OP_METHOD` calls, so they need no representation of their own - only the
 name string and the method prototypes appear.
 
 Non-finite `double`s have no JSON token, so the writer emits them as strings:

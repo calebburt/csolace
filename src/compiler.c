@@ -7,9 +7,7 @@
 #include "vm.h"
 #include "table.h"
 #include "dynamic_array.h"
-#ifdef SLC_DEBUG
 #include "debug.h"
-#endif
 
 typedef enum {
     PREC_NONE,
@@ -72,19 +70,13 @@ typedef struct {
     MethodList methods;
 } TypeInfo;
 
-typedef struct {
-    int index;
-    // ...?
-} Patch;
-
-MAKE_DYNAMIC_ARRAY_H(Patch, PatchArray)
-MAKE_DYNAMIC_ARRAY(Patch, PatchArray)
-
+// A `recur` declaration. `slot` is the local holding the (initially Nil)
+// function value; `defined` flips once the matching `def` fills that slot.
 typedef struct {
     Token name;
     Type *type;
-    PatchArray patches;
-    bool active;
+    int slot;
+    bool defined;
 } RecurEntry;
 
 MAKE_DYNAMIC_ARRAY_H(RecurEntry, RecurArray)
@@ -101,6 +93,11 @@ typedef struct Compiler {
     Local locals[UINT8_COUNT];
     int localCount;
     int scopeDepth;
+    // Slot of the innermost block's value slot, or -1 outside any block. Each
+    // nested block parks its value in the enclosing block's slot and reclaims
+    // its own, so the enclosing endScope always finds exactly one value on top
+    // of the locals it is about to pop.
+    int blockValueSlot;
 
     Upvalue upvalues[UINT8_COUNT];
 
@@ -115,6 +112,10 @@ typedef struct ClassCompiler {
     MethodList methods;
     bool hasInitializer;
     int initializerId;
+    Type *instanceType;      // the type of `self` inside this class
+    FieldList scannedFields; // pass 1: token-level pre-scan
+    MethodList scannedMethods;
+    bool scanned;
 } ClassCompiler;
 
 typedef struct Parser {
@@ -128,6 +129,7 @@ typedef struct Parser {
     Type *prevType;
     bool hadError;
     bool panicMode;
+    bool scanning;          // inside the class pre-scan: suppress diagnostics
 } Parser;
 
 typedef Type *(*ParseFn)(Parser* parser, bool canAssign);
@@ -146,7 +148,9 @@ static Chunk *currentChunk(Parser *parser) {
 
 
 static void errorAtKind(Parser *parser, Token *token, const char *kind, const char *message) {
-    if (parser->panicMode) return;
+    // The class pre-scan re-parses the same tokens, so its diagnostics would be
+    // duplicates of the real pass.
+    if (parser->panicMode || parser->scanning) return;
     parser->panicMode = true;
     if (token->type != TOKEN_ERROR)
         fprintf(stderr, "\033[31m%s: %s \033[0m\n", kind, message);
@@ -256,6 +260,7 @@ static void initCompiler(Compiler *compiler, Parser *parser, FunctionType t) {
     compiler->type = t;
     compiler->localCount = 0;
     compiler->scopeDepth = 0;
+    compiler->blockValueSlot = -1;
     initRecurArray(&compiler->recursions);
     initTypeTable(&compiler->types);
 
@@ -370,6 +375,12 @@ static bool identifiersEqual(Token *a, Token *b) {
     return memcmp(a->start, b->start, a->length) == 0;
 }
 
+// An interned name from a Field/Method list versus the token that produced it.
+static bool stringMatches(ObjString *string, Token *name) {
+    if (string->length != name->length) return false;
+    return memcmp(string->chars, name->start, name->length) == 0;
+}
+
 // Add a local with an "uninitialized" depth sentinel (-1).
 static int addLocal(Parser *parser, Token name, Type *type) {
     Compiler *compiler = parser->currentCompiler;
@@ -422,10 +433,6 @@ static int resolveLocal(Parser *parser, Compiler *compiler, Token *name) {
             }
             return i;
         }
-    }
-    for (int j = compiler->recursions.count - 1; j >= 0; j--) {
-        RecurEntry entry = compiler->recursions.data[j];
-        
     }
     return -1;
 }
@@ -480,10 +487,30 @@ static int resolveNative(Parser *parser, Token *name) {
     return -1;
 }
 
+// Class types are published on the compiler that declared them, so a lookup from
+// inside a method (or a nested function) has to walk out through the enclosing
+// compilers. typesEqual does not compare function types structurally, hence the
+// manual signature walk in sameSignature.
+static bool lookupTypeInfo(Parser *parser, Type *type, TypeInfo *out) {
+    for (Compiler *c = parser->currentCompiler; c != NULL; c = c->enclosing) {
+        if (getTypeTable(&c->types, type, out)) return true;
+    }
+    return false;
+}
+
+static bool sameSignature(Type *a, Type *b) {
+    Type *sa = a != NULL ? a->generics : NULL;
+    Type *sb = b != NULL ? b->generics : NULL;
+    for (; sa != NULL && sb != NULL; sa = sa->next, sb = sb->next) {
+        if (!typesEqual(sa->generics, sb->generics)) return false;
+    }
+    return sa == NULL && sb == NULL;
+}
+
 static uint8_t findPropertyId(Parser *parser, Token name, Type *type) {
     TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
-    
-    if (getTypeTable(&parser->currentCompiler->types, type, fields)) {
+
+    if (lookupTypeInfo(parser, type, fields)) {
         for (int i = 0; i < fields->fields.count; i++) {
             Field *field = &fields->fields.data[i];
             if (name.length == field->name->length && memcmp(name.start, field->name->chars, name.length) == 0) {
@@ -498,8 +525,8 @@ static uint8_t findPropertyId(Parser *parser, Token name, Type *type) {
 
 static uint8_t findMethodId(Parser *parser, Token name, Type *type) {
     TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
-    
-    if (getTypeTable(&parser->currentCompiler->types, type, fields)) {
+
+    if (lookupTypeInfo(parser, type, fields)) {
         for (int i = 0; i < fields->methods.count; i++) {
             Method *method = &fields->methods.data[i];
             if (name.length == method->name->length && memcmp(name.start, method->name->chars, name.length) == 0) {
@@ -699,6 +726,87 @@ static Type *outerVariable(Parser *parser, bool canAssign) {
     return existingType;
 }
 
+// Token-level skip of a `def`/`class`/`if`/`while` body we just opened. Only the
+// block openers that the parser understands count, so nesting stays balanced.
+static void skipBody(Parser *parser) {
+    int depth = 1;
+    while (depth > 0) {
+        if (match(parser, TOKEN_IF) || match(parser, TOKEN_WHILE) ||
+            match(parser, TOKEN_DEF) || match(parser, TOKEN_CLASS)) {
+            depth++;
+        } else if (match(parser, TOKEN_END)) {
+            depth--;
+        } else if (check(parser, TOKEN_EOF)) {
+            return;
+        } else {
+            advance(parser);
+        }
+    }
+}
+
+// Pass 1 over a class body: record every field and method signature without
+// compiling a single body, so methods can call each other in any order.
+static void preScanClassBody(Parser *parser, ClassCompiler *cc) {
+    while (!check(parser, TOKEN_END) && !check(parser, TOKEN_EOF)) {
+        if (match(parser, TOKEN_IDENTIFIER)) {
+            Token fieldName = parser->previous;
+            consume(parser, TOKEN_COLON, "Expect type after field name.");
+            Type *fieldType = parseType(parser);
+            if (cc->scannedFields.count >= UINT8_COUNT) {
+                error(parser, "Class has too many fields.");
+                return;
+            }
+            Field *f = &cc->scannedFields.data[cc->scannedFields.count];
+            f->name = copyString(parser->vm, fieldName.start, fieldName.length);
+            f->type = fieldType;
+            f->index = (uint8_t)cc->scannedFields.count;
+            cc->scannedFields.count++;
+        } else if (match(parser, TOKEN_DEF)) {
+            consume(parser, TOKEN_IDENTIFIER, "Expect method name.");
+            Token methodName = parser->previous;
+
+            TypeArray params;
+            initTypeArray(&params);
+            consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after method name.");
+            if (!check(parser, TOKEN_RIGHT_PAREN)) {
+                do {
+                    consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
+                    Type *paramType = match(parser, TOKEN_COLON) ? parseType(parser)
+                                                                 : type(parser->vm, "Any");
+                    appendTypeArray(parser->vm, &params, paramType);
+                } while (match(parser, TOKEN_COMMA));
+            }
+            consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+            Type *ret = match(parser, TOKEN_GREATER) ? parseType(parser) : type(parser->vm, "Any");
+
+            if (cc->scannedMethods.count >= UINT8_COUNT) {
+                error(parser, "Class has too many methods.");
+                freeTypeArray(parser->vm, &params);
+                return;
+            }
+            Method *m = &cc->scannedMethods.data[cc->scannedMethods.count];
+            m->name = copyString(parser->vm, methodName.start, methodName.length);
+            m->type = functionType(parser->vm, ret, &params);
+            m->index = (uint8_t)cc->scannedMethods.count;
+            cc->scannedMethods.count++;
+            freeTypeArray(parser->vm, &params);
+
+            skipBody(parser);
+        } else {
+            advance(parser); // stray token: the real pass reports it
+        }
+    }
+    cc->scanned = true;
+}
+
+static void publishClassTypes(Parser *parser, ClassCompiler *classCompiler) {
+    TypeInfo typeInfo;
+    typeInfo.fields = classCompiler->scanned ? classCompiler->scannedFields : classCompiler->fields;
+    typeInfo.methods = classCompiler->scanned ? classCompiler->scannedMethods : classCompiler->methods;
+    setTypeTable(parser->vm, &parser->currentCompiler->types,
+                 classCompiler->instanceType, typeInfo);
+}
+
 static Type *function(Parser *parser, FunctionType funType, int recursiveSlot) {
     Compiler *outer = parser->currentCompiler;
     Compiler compiler;
@@ -739,7 +847,12 @@ static Type *function(Parser *parser, FunctionType funType, int recursiveSlot) {
 
     Type *funcType = functionType(parser->vm, compiler.function->returnType,
                                  &compiler.function->parameters);
-    compiler.locals[0].type = funcType;
+    // Slot 0 is `self` in a method and the function itself in a free function.
+    if (funType == TYPE_METHOD || funType == TYPE_INITIALIZER) {
+        compiler.locals[0].type = parser->currentClass->instanceType;
+    } else {
+        compiler.locals[0].type = funcType;
+    }
     if (recursiveSlot >= 0) outer->locals[recursiveSlot].type = funcType;
 
     while (!check(parser, TOKEN_END) && !parser->hadError) {
@@ -767,16 +880,29 @@ static void method(Parser *parser, ClassCompiler *classCompiler) {
     consume(parser, TOKEN_IDENTIFIER, "Expect method name.");
     Token methodName = parser->previous;
 
-    FunctionType type = TYPE_METHOD;
-    Type *functionType = function(parser, type, -1);
-    if (methodName.length == 4 && memcmp(methodName.start, "init", 4) == 0) {
+    // `init` must be known before the body is compiled: initializers return
+    // `self` and are the only methods called implicitly by the constructor.
+    bool isInit = methodName.length == 4 && memcmp(methodName.start, "init", 4) == 0;
+    Type *methodType = function(parser, isInit ? TYPE_INITIALIZER : TYPE_METHOD, -1);
+    if (isInit) {
         classCompiler->hasInitializer = true;
         classCompiler->initializerId = classCompiler->methods.count;
-        type = TYPE_INITIALIZER;
     }
-    classCompiler->methods.data[classCompiler->methods.count].name = copyString(parser->vm, methodName.start, methodName.length);
-    classCompiler->methods.data[classCompiler->methods.count].type = functionType;
-    classCompiler->methods.data[classCompiler->methods.count].index = classCompiler->methods.count;
+
+    int index = classCompiler->methods.count;
+    if (classCompiler->scanned) {
+        // The pre-scan already published this signature; the real pass has to
+        // agree with it or method ids would shift under the compiled bodies.
+        if (index >= classCompiler->scannedMethods.count ||
+            !stringMatches(classCompiler->scannedMethods.data[index].name, &methodName) ||
+            !sameSignature(methodType, classCompiler->scannedMethods.data[index].type)) {
+            debug("method %d does not match its pre-scanned signature\n", index);
+        }
+    }
+
+    classCompiler->methods.data[index].name = copyString(parser->vm, methodName.start, methodName.length);
+    classCompiler->methods.data[index].type = methodType;
+    classCompiler->methods.data[index].index = (uint8_t)index;
     classCompiler->methods.count++;
 
     emitByte(parser, OP_METHOD);
@@ -851,54 +977,50 @@ static Type *retExpr(Parser *parser, bool canAssign) {
     return valueType;
 }
 
+// `recur name(params) > Ret` declares a function before its body exists, so two
+// or more of them can call each other. The name becomes an ordinary local
+// holding Nil; the matching `def` stores the closure into that same slot.
 static Type *recurExpr(Parser *parser, bool canAssign) {
+    if (parser->currentClass != NULL) {
+        error(parser, "'recur' is only for top-level functions; class methods can call each other directly.");
+    }
     consume(parser, TOKEN_IDENTIFIER, "Expect function name after 'recur'.");
     Token name = parser->previous;
 
-    consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after function name.");
     TypeArray parameters;
     initTypeArray(&parameters);
-
+    consume(parser, TOKEN_LEFT_PAREN, "Expect '(' after function name.");
     if (!check(parser, TOKEN_RIGHT_PAREN)) {
         do {
             if (parameters.count == UINT8_COUNT) {
                 error(parser, "Can't have more than 255 parameters.");
+                freeTypeArray(parser->vm, &parameters);
                 return errorType(parser->vm);
             }
             consume(parser, TOKEN_IDENTIFIER, "Expect parameter name.");
-            Token paramName = parser->previous;
-
-            Type *paramType = NIL_TYPE;
-            if (match(parser, TOKEN_COLON)) {
-                paramType = parseType(parser);
-            } else {
-                paramType = type(parser->vm, "Any");
-            }
-
-            declareVariable(parser, paramName, paramType);
-            markInitialized(parser);
-
+            Type *paramType = match(parser, TOKEN_COLON) ? parseType(parser)
+                                                         : type(parser->vm, "Any");
             appendTypeArray(parser->vm, &parameters, paramType);
         } while (match(parser, TOKEN_COMMA));
     }
     consume(parser, TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
 
-    Type *returnType;
-    if (match(parser, TOKEN_GREATER)) {
-        returnType = parseType(parser);
-    } else {
-        returnType = type(parser->vm, "Any");
-    }
+    Type *returnType = match(parser, TOKEN_GREATER) ? parseType(parser)
+                                                    : type(parser->vm, "Any");
+    Type *funcType = functionType(parser->vm, returnType, &parameters);
+    freeTypeArray(parser->vm, &parameters);
 
-    Type *funcType = functionType(parser->vm, returnType,
-                                 &parameters);
-    
-    RecurEntry recurEntry;
-    recurEntry.name = name;
-    recurEntry.type = funcType;
-    recurEntry.active = true;
-    initPatchArray(&recurEntry.patches);
-    appendRecurArray(parser->vm, &parser->currentCompiler->recursions, recurEntry);
+    int slot = declareVariable(parser, name, funcType);
+    if (slot < 0) return errorType(parser->vm);
+    markInitializedAt(parser, slot);
+
+    // OP_NIL lands in the new local's slot; the copy pushed by OP_GET_LOCAL is
+    // this statement's value, which the caller's OP_POP discards.
+    emitByte(parser, OP_NIL);
+    emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
+
+    RecurEntry entry = {name, funcType, slot, false};
+    appendRecurArray(parser->vm, &parser->currentCompiler->recursions, entry);
 
     return NIL_TYPE;
 }
@@ -920,7 +1042,7 @@ static Type *call(Parser *parser, bool canAssign) {
     } else if (classTyped) {
         retSlot = calleeType->generics;
         TypeInfo classInfo;
-        if (retSlot != NULL && getTypeTable(&parser->currentCompiler->types, retSlot, &classInfo)) {
+        if (retSlot != NULL && lookupTypeInfo(parser, retSlot, &classInfo)) {
             for (int i = 0; i < classInfo.methods.count; i++) {
                 Method *method = &classInfo.methods.data[i];
                 if (method->name->length == 4 && memcmp(method->name->chars, "init", 4) == 0) {
@@ -982,7 +1104,7 @@ static Type *dot(Parser *parser, bool canAssign) {
     
 
     TypeInfo *fields = ALLOCATE(parser->vm, TypeInfo, 1);
-    if (!getTypeTable(&parser->currentCompiler->types, parser->prevType, fields)) {
+    if (!lookupTypeInfo(parser, parser->prevType, fields)) {
         typeError(parser, "Only instances have fields."); // TODO: Change error message, because anything can have fields.
         printValue(OBJ_VAL(parser->prevType->name));
         return errorType(parser->vm);
@@ -1029,12 +1151,73 @@ static Type *dot(Parser *parser, bool canAssign) {
     }
 }
 
+// A block's value ends up on the operand stack directly above the locals the
+// block declared, but endScope pops from the top, so it would throw the value
+// away and leave the locals behind. Give the block one local of its own, ahead
+// of everything it declares, and park the value there.
+//
+// The empty name can never be matched by name resolution, so the slot is
+// unreachable from Solace code. The outermost block in a function keeps its slot
+// to the end; a nested block hands the value up to the enclosing block's slot,
+// and the enclosing block's endScope reclaims this one on whichever path ran.
+static int beginBlockValue(Parser *parser) {
+    Compiler *compiler = parser->currentCompiler;
+    Token hidden = {TOKEN_IDENTIFIER, "", 0, parser->previous.line};
+    int slot = addLocal(parser, hidden, NIL_TYPE);
+    if (slot < 0) return -1;
+    // Scoped to the block that opened the scope, so the block's own endScope
+    // leaves it alone. Both arms of an `if` run an endScope, so a slot scoped
+    // inside the `if` would be reclaimed by one arm and not the other; the
+    // enclosing block's endScope reclaims it instead, once, on one path.
+    compiler->locals[slot].depth = compiler->scopeDepth - 1;
+    compiler->blockValueSlot = slot;
+    emitByte(parser, OP_NIL);
+    return slot;
+}
+
+// `bodyEmpty` blocks never pushed a value of their own, so their slot already
+// holds the Nil that the block yields.
+//
+// OP_SET_LOCAL stores the top of the stack into the slot without popping it,
+// and a local's slot is its own position in the frame, so parking the value is
+// nothing but a store: the copy the body left above the block's locals is what
+// the following OP_POP drops, and endScope then drops the locals themselves.
+// That leaves the value as the top of the stack, in its own slot, with no
+// reload -- emitting an OP_GET_LOCAL here would push a second copy and grow the
+// stack by one slot on every execution of the block, which a `while` loop turns
+// into a stack overflow after a few million iterations.
+//
+// `outer` is the enclosing block's value slot, or -1 when there is none. A
+// nested block stores into it and then leaves a copy on top, because its own
+// endScope reclaims the slot it stored into and so pops one value too many
+// otherwise. The enclosing block's end consumes that copy, and so does the
+// OP_POP the statement level emits when the block is not its body's last
+// statement.
+static void endBlockValue(Parser *parser, int slot, int outer, bool bodyEmpty) {
+    Compiler *compiler = parser->currentCompiler;
+    if (slot < 0) return;
+    if (!bodyEmpty) {
+        emitBytes(parser, OP_SET_LOCAL, (uint8_t)(outer >= 0 ? outer : slot));
+        emitByte(parser, OP_POP);
+    }
+    endScope(parser);
+    compiler->blockValueSlot = outer;
+    if (outer >= 0) {
+        emitBytes(parser, OP_GET_LOCAL, (uint8_t)outer);
+    }
+}
+
 static Type *ifExpr(Parser *parser, bool canAssign) {
+    beginScope(parser);
+    // One slot for the value of whichever branch runs, so both arms agree on
+    // where their locals live. The Nil it starts as doubles as the value of an
+    // `if` with no `else`.
+    int outerSlot = parser->currentCompiler->blockValueSlot;
+    int valueSlot = beginBlockValue(parser);
     expression(parser);
 
     int thenJump = emitJump(parser, OP_JUMP_IF_FALSE);
     emitByte(parser, OP_POP);
-    beginScope(parser);
     Type *thenType = NIL_TYPE;
     bool thenEmpty = true;
     while (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE) && !parser->hadError) {
@@ -1042,8 +1225,7 @@ static Type *ifExpr(Parser *parser, bool canAssign) {
         thenEmpty = false;
         if (!check(parser, TOKEN_END) && !check(parser, TOKEN_ELSE)) emitByte(parser, OP_POP);
     }
-    if (thenEmpty) emitByte(parser, OP_NIL);  // keep stack balanced when body is empty
-    endScope(parser);
+    endBlockValue(parser, valueSlot, outerSlot, thenEmpty);
 
     int elseJump = emitJump(parser, OP_JUMP);
 
@@ -1051,21 +1233,19 @@ static Type *ifExpr(Parser *parser, bool canAssign) {
     emitByte(parser, OP_POP);
 
     Type *elseType = NIL_TYPE;
+    bool elseEmpty = true;
+    beginScope(parser); // the else body gets its own scope, but reuses valueSlot
     if (match(parser, TOKEN_ELSE)) {
-        beginScope(parser);
-        bool elseEmpty = true;
         while (!check(parser, TOKEN_END) && !parser->hadError) {
             elseType = expression(parser);
             elseEmpty = false;
             if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
         }
-        if (elseEmpty) emitByte(parser, OP_NIL);
-        endScope(parser);
         consume(parser, TOKEN_END, "Expected 'end' after else block.");
     } else {
         consume(parser, TOKEN_END, "Expected 'end' after if block.");
-        emitByte(parser, OP_NIL);
     }
+    endBlockValue(parser, valueSlot, outerSlot, elseEmpty);
     patchJump(parser, elseJump);
 
     return unionType(parser->vm, thenType, elseType);
@@ -1083,6 +1263,10 @@ static Type *whileExpr(Parser *parser, bool canAssign) {
     emitByte(parser, OP_POP);  // pop previous iteration result
 
     beginScope(parser);
+    // Re-pushed on every iteration, because the loop pops the previous
+    // iteration's value before the body runs.
+    int outerSlot = parser->currentCompiler->blockValueSlot;
+    int bodySlot = beginBlockValue(parser);
     Type *lastType = NIL_TYPE;
     bool bodyEmpty = true;
     while (!check(parser, TOKEN_END) && !parser->hadError) {
@@ -1090,8 +1274,7 @@ static Type *whileExpr(Parser *parser, bool canAssign) {
         bodyEmpty = false;
         if (!check(parser, TOKEN_END)) emitByte(parser, OP_POP);
     }
-    if (bodyEmpty) emitByte(parser, OP_NIL);  // keep stack balanced when body is empty
-    endScope(parser);
+    endBlockValue(parser, bodySlot, outerSlot, bodyEmpty);
     consume(parser, TOKEN_END, "Expected 'end' after while body.");
 
     // At this point, body result is on stack
@@ -1105,11 +1288,41 @@ static Type *whileExpr(Parser *parser, bool canAssign) {
 
 static Type *funExpr(Parser *parser, bool canAssign) {
     consume(parser, TOKEN_IDENTIFIER, "Expect function name.");
+    Token name = parser->previous;
 
-    int slot = declareVariable(parser, parser->previous, type(parser->vm, "Any"));
-    markInitializedAt(parser, slot);
+    Compiler *compiler = parser->currentCompiler;
+    int pending = -1;
+    for (int i = compiler->recursions.count - 1; i >= 0; i--) {
+        RecurEntry *entry = &compiler->recursions.data[i];
+        if (!entry->defined && identifiersEqual(&name, &entry->name)) {
+            pending = i;
+            break;
+        }
+    }
+
+    int slot;
+    if (pending >= 0) {
+        slot = compiler->recursions.data[pending].slot;
+    } else {
+        slot = declareVariable(parser, name, type(parser->vm, "Any"));
+        if (slot < 0) return errorType(parser->vm);
+        markInitializedAt(parser, slot);
+    }
 
     Type *funcType = function(parser, TYPE_FUNCTION, slot);
+
+    if (pending >= 0) {
+        Type *declared = compiler->recursions.data[pending].type;
+        compiler->recursions.data[pending].defined = true;
+        if (!sameSignature(funcType, declared)) {
+            typeError(parser, "signature does not match the 'recur' declaration");
+        }
+        // `recur` already materialised the slot as Nil, so OP_CLOSURE pushed the
+        // closure above it: store it into the declared slot, then drop the copy so
+        // the stack top stays at localCount.
+        emitBytes(parser, OP_SET_LOCAL, (uint8_t)slot);
+        emitByte(parser, OP_POP);
+    }
 
     emitBytes(parser, OP_GET_LOCAL, (uint8_t)slot);
     return funcType;
@@ -1124,6 +1337,7 @@ static Type *class(Parser *parser, bool canAssign) {
 
     ClassCompiler classCompiler = {0};
     classCompiler.enclosing = parser->currentClass;
+    classCompiler.instanceType = classNameType;
     parser->currentClass = &classCompiler;
 
     Token className = parser->previous;
@@ -1134,6 +1348,23 @@ static Type *class(Parser *parser, bool canAssign) {
 
     emitByte(parser, OP_CLASS);
     emitByte(parser, nameConstant);
+
+    // Pass 1: token-level pre-scan of the class body, so every field and method
+    // signature is published before a single method body is compiled. Without it
+    // a method can only see the signatures declared before it.
+    Lexer savedLexer = *parser->lexer;
+    Token savedCurrent = parser->current;
+    Token savedPrevious = parser->previous;
+    bool savedPanic = parser->panicMode;
+    parser->scanning = true;
+    preScanClassBody(parser, &classCompiler);
+    parser->scanning = false;
+    parser->panicMode = savedPanic;
+    *parser->lexer = savedLexer;
+    parser->current = savedCurrent;
+    parser->previous = savedPrevious;
+    publishClassTypes(parser, &classCompiler);
+
     int fieldCountOffset = currentChunk(parser)->code.count;
     emitByte(parser, 0);
 
@@ -1146,6 +1377,8 @@ static Type *class(Parser *parser, bool canAssign) {
             classCompiler.fields.data[classCompiler.fields.count].type = type;
             classCompiler.fields.data[classCompiler.fields.count].index = classCompiler.fields.count;
             classCompiler.fields.count++;
+        } else if (match(parser, TOKEN_RECUR)) {
+            error(parser, "'recur' is only for top-level functions; class methods can call each other directly.");
         } else {
             consume(parser, TOKEN_DEF, "Expect field name or method definition in class body.");
             method(parser, &classCompiler);
@@ -1162,10 +1395,7 @@ static Type *class(Parser *parser, bool canAssign) {
     
     namedVariable(parser, className, false);
 
-    TypeInfo typeInfo;
-    typeInfo.fields = classCompiler.fields;
-    typeInfo.methods = classCompiler.methods;
-    setTypeTable(parser->vm, &parser->currentCompiler->types, classNameType, typeInfo);
+    publishClassTypes(parser, &classCompiler);
 
     if (classCompiler.hasInitializer) {
         emitBytes(parser, OP_INITIALIZER, classCompiler.initializerId);
@@ -1286,12 +1516,40 @@ static char *replRetainSource(const char *source) {
     return copy;
 }
 
+// A type table is the only thing holding the interned names of a class's fields
+// and methods, and the types they were declared with. A REPL session keeps its
+// compiler (and therefore its table) alive across lines, so those have to be
+// marked while the session's code is running.
+static void markTypeInfo(VM *vm, TypeInfo *info) {
+    for (int i = 0; i < info->fields.count; i++) {
+        markObject(vm, (Obj*)info->fields.data[i].name);
+        markType(vm, info->fields.data[i].type);
+    }
+    for (int i = 0; i < info->methods.count; i++) {
+        markObject(vm, (Obj*)info->methods.data[i].name);
+        markType(vm, info->methods.data[i].type);
+    }
+}
+
+static void markCompilerTypes(VM *vm, Compiler *compiler) {
+    for (int i = 0; i < compiler->types.capacity; i++) {
+        TypeTableEntry *entry = &compiler->types.data[i];
+        if (!entry->occupied) continue;
+        markType(vm, entry->key);
+        markTypeInfo(vm, &entry->value);
+    }
+    for (int i = 0; i < compiler->recursions.count; i++) {
+        markType(vm, compiler->recursions.data[i].type);
+    }
+}
+
 void markReplRoots(VM *vm) {
     if (!replInitialized) return;
     markObject(vm, (Obj*)replCompiler.function);
     for (int i = 0; i < replCompiler.localCount; i++) {
         markType(vm, replCompiler.locals[i].type);
     }
+    markCompilerTypes(vm, &replCompiler);
 }
 
 void resetRepl(void) {

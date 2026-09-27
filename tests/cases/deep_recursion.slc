@@ -1,0 +1,9 @@
+def count(n: Number) > Number
+  if n <= 0
+    0
+  else
+    1 + count(n - 1)
+  end
+end
+
+print(count(20000))

@@ -1,0 +1,13 @@
+class Inner
+  x: Number
+end
+
+class Outer
+  inner: Inner
+
+  def read() > Number
+    self.inner.x
+  end
+end
+
+print(Outer().read())

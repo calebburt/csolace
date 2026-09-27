@@ -1,0 +1,21 @@
+class Parity
+  def isOdd(n: Number) > Boolean
+    if n == 0
+      false
+    else
+      self.isEven(n - 1)
+    end
+  end
+
+  def isEven(n: Number) > Boolean
+    if n == 0
+      true
+    else
+      self.isOdd(n - 1)
+    end
+  end
+end
+
+p = Parity()
+print(p.isEven(7))
+print(p.isOdd(7))

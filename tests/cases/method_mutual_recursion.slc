@@ -1,0 +1,22 @@
+# isEven is declared before isOdd and calls it; the other way round too.
+class Parity
+  def isEven(n: Number) > Boolean
+    if n == 0
+      true
+    else
+      self.isOdd(n - 1)
+    end
+  end
+
+  def isOdd(n: Number) > Boolean
+    if n == 0
+      false
+    else
+      self.isEven(n - 1)
+    end
+  end
+end
+
+p = Parity()
+print(p.isEven(10))
+print(p.isOdd(10))

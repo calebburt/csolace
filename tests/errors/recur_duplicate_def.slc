@@ -1,0 +1,7 @@
+recur f(n: Number) > Number
+def f(n: Number) > Number
+  n
+end
+def f(n: Number) > Number
+  n
+end

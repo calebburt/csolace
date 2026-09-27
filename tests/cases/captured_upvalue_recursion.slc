@@ -1,0 +1,12 @@
+def make(n: Number) > Number
+  def go(k: Number) > Number
+    if k <= 0
+      n
+    else
+      go(k - 1)
+    end
+  end
+  go(2000)
+end
+
+print(make(7))

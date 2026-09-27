@@ -1,0 +1,21 @@
+class Inner
+  n: Number
+
+  def make() > Inner
+    i = Inner()
+    i.n = 7
+    i
+  end
+end
+
+class Outer
+  inner: Inner
+
+  def read() > Number
+    self.inner.n
+  end
+end
+
+o = Outer()
+o.inner = Inner().make()
+print(o.read())

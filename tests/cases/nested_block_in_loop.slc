@@ -1,0 +1,11 @@
+i = 0
+total = 0
+while i < 1000
+  if i > 0
+    d = i
+    total = total + d
+  end
+  i = i + 1
+end
+print(total)
+print(i)

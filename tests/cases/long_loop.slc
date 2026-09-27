@@ -1,0 +1,8 @@
+# A block's value used to be left on the operand stack twice, once per
+# execution of the block, so the stack grew by a slot per iteration and a loop
+# this size died with "Stack overflow." The value has to stay put.
+i = 0
+while i < 2000000
+  i = i + 1
+end
+print(i)

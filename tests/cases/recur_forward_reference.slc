@@ -1,0 +1,7 @@
+recur later(n: Number) > Number
+print("before")
+def later(n: Number) > Number
+  n * 10
+end
+print("after")
+print(later(2))

@@ -10,8 +10,12 @@
 // a pointer to it during compilation so the GC can reach compiler roots.
 typedef struct Parser Parser;
 
+// Initial sizes, and the point past which the arrays stop doubling. Hitting a
+// hard max raises "Stack overflow." rather than growing without bound.
 #define FRAMES_MAX 64
 #define STACK_MAX (FRAMES_MAX * UINT8_COUNT)
+#define FRAMES_HARD_MAX (1 << 16)
+#define STACK_HARD_MAX (1 << 20)
 #define NATIVES_MAX UINT8_COUNT
 
 typedef struct {
@@ -21,14 +25,16 @@ typedef struct {
 } CallFrame;
 
 typedef struct VM {
-    CallFrame frames[FRAMES_MAX]; // will replace with dynamic array maybe
+    CallFrame *frames;
     int frameCount;
+    int frameCapacity;
 
     Chunk *chunk;
     uint8_t *ip;
 
-    Value stack[STACK_MAX]; // will replace with dynamic array maybe
+    Value *stack;
     Value *stackTop;
+    int stackCapacity;
 
     ObjUpvalue *openUpvalues;
     Obj *objects;

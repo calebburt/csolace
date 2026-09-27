@@ -1,0 +1,9 @@
+def forever(n: Number) > Number
+  if n <= 0
+    0
+  else
+    1 + forever(n - 1)
+  end
+end
+
+print(forever(10000000))

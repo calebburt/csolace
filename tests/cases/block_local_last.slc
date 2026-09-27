@@ -1,0 +1,16 @@
+def f(n: Number) > Number
+  if n > 0
+    a = 1
+    a + 1
+  else
+    0
+  end
+end
+print(f(1))
+print(f(-1))
+i = 0
+while i < 3
+  x = i
+  i = i + 1
+end
+print(i)

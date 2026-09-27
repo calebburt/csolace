@@ -1,0 +1,20 @@
+# The value of a block used to be destroyed by endScope's pops.
+def pick(n: Number) > String
+  if n > 0
+    "positive"
+  else
+    "not positive"
+  end
+end
+
+def count(n: Number) > Number
+  if n <= 0
+    0
+  else
+    1 + count(n - 1)
+  end
+end
+
+print(pick(1))
+print(pick(0))
+print(count(100))
