@@ -1,25 +1,79 @@
-solace: src/*.c src/*.h
-	gcc -o bin/solace src/*.c -Wall -Wextra -pedantic -Wno-unused-parameter -O2 -lm
+CC := gcc
 
-.PHONY = run
-run: solace
-	bin/solace
+CFLAGS := -Wall -Wextra -pedantic -Wno-unused-parameter
+LDLIBS := -lm
 
-.PHONY = test
-test: solace
+SRC := $(wildcard src/*.c)
+NAME := solace
+
+BUILD := build
+BIN := bin
+
+NORMAL_OBJ := $(SRC:src/%.c=$(BUILD)/normal/%.o)
+DEBUG_OBJ  := $(SRC:src/%.c=$(BUILD)/debug/%.o)
+PROF_OBJ   := $(SRC:src/%.c=$(BUILD)/prof/%.o)
+
+# ------------------------------------------------------------------------------
+# Executables
+# ------------------------------------------------------------------------------
+
+$(BIN)/$(NAME): $(NORMAL_OBJ)
+	@mkdir -p $(@D)
+	$(CC) -O2 -o $@ $^ $(LDLIBS)
+
+$(BIN)/$(NAME)_dbg: $(DEBUG_OBJ)
+	@mkdir -p $(@D)
+	$(CC) -g -O0 -o $@ $^ $(LDLIBS)
+
+$(BIN)/$(NAME)_prof: $(PROF_OBJ)
+	@mkdir -p $(@D)
+	$(CC) -O2 -pg -o $@ $^ $(LDLIBS)
+
+# ------------------------------------------------------------------------------
+# Object files
+# ------------------------------------------------------------------------------
+
+$(BUILD)/normal/%.o: src/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -O2 -MMD -MP -c $< -o $@
+
+$(BUILD)/debug/%.o: src/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -DSLC_DEBUG -g -O0 -MMD -MP -c $< -o $@
+
+$(BUILD)/prof/%.o: src/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -O2 -pg -MMD -MP -c $< -o $@
+
+# Automatically include GCC's generated header dependencies.
+-include $(NORMAL_OBJ:.o=.d)
+-include $(DEBUG_OBJ:.o=.d)
+-include $(PROF_OBJ:.o=.d)
+
+# ------------------------------------------------------------------------------
+# Convenience targets
+# ------------------------------------------------------------------------------
+
+.PHONY: run
+run: $(BIN)/$(NAME)
+	$(BIN)/$(NAME)
+
+.PHONY: debug
+debug: $(BIN)/$(NAME)_dbg
+	$(BIN)/$(NAME)_dbg
+
+.PHONY: prof
+prof: $(BIN)/$(NAME)_prof profile.slc
+	$(BIN)/$(NAME)_prof profile.slc
+	gprof $(BIN)/$(NAME)_prof gmon.out -bp
+
+.PHONY: test
+test: $(BIN)/$(NAME)
 	./tests/run.sh
 
-.PHONY = debug
-debug: src/*.c src/*.h
-	gcc -o bin/solace_dbg src/*.c -Wall -Wextra -Wno-unused-parameter -pedantic -DSLC_DEBUG -g -O0 -pg -lm
-	bin/solace_dbg
+.PHONY: all
+all: $(BIN)/$(NAME) $(BIN)/$(NAME)_dbg $(BIN)/$(NAME)_prof
 
-.PHONY = prof
-prof: src/*.c src/*.h profile.slc
-	gcc -o bin/solace_prof src/*.c -Wall -Wextra -pedantic -Wno-unused-parameter -O2 -lm -pg
-	bin/solace_prof profile.slc
-	gprof bin/solace_prof gmon.out -bp
-
-.PHONY = clean
+.PHONY: clean
 clean:
-	rm -f gmon.out
+	rm -rf $(BUILD) $(BIN) gmon.out

@@ -13,7 +13,7 @@ make
 
 # OR
 
-make solace
+make bin/solace
 ```
 
 Running is as simple as:
@@ -26,15 +26,21 @@ bin/solace
 make run
 ```
 
-To compile the debug build and launch into the debug REPL, run:
+To compile the debug build and optionally launch into the debug REPL, run:
 
 ```bash
+# With repl
 make debug
+
+# Without repl
+make bin/solace_dbg
 ```
+
+`make all` just builds all the binaries, which I use to put them all into the repo to release.
 
 ## Testing
 
-Solace has a large set of regression (and soon to be, regular) tests. They live in tests/. The test "framework" is similar to lox's. There are a bunch of solace scripts and expected outputs. These are applicable to any solace implementation, but the test runner will need to be adapted. To run the tests, execute:
+Solace has a large set of regression (and soon to be, regular) tests. They live in tests/. The test "framework" is similar in nature to lox's. There are a bunch of solace scripts and expected outputs. These are applicable to any solace implementation, but the test runner will need to be adapted. To run the tests, execute:
 
 ```bash
 make test
@@ -50,6 +56,9 @@ There is also a small profile script at ./profile.slc. To run it, with a profile
 
 ```bash
 make prof
+
+# To just make the binary
+make bin/solace_prof
 ```
 
 ## Repo Layout
