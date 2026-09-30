@@ -124,7 +124,6 @@ typedef struct Parser {
     Lexer *lexer;
     Compiler *currentCompiler;
     ClassCompiler *currentClass;
-    Chunk *compilingChunk;
     VM *vm;
     Type *prevType;
     bool hadError;
@@ -1564,14 +1563,17 @@ void resetRepl(void) {
 ObjPrototype *compile(VM *vm, const char *source) {
     Lexer lexer;
     initLexer(&lexer, source);
-    Parser parser;
-    parser.lexer = &lexer;
-    parser.hadError = false;
-    parser.panicMode = false;
-    parser.vm = vm;
-    parser.prevType = errorType(vm);
-    parser.currentCompiler = NULL;  // initCompiler reads this for `enclosing`
-    parser.currentClass = NULL;
+    // Designated init, not a sequence of assignments: every member is set
+    // explicitly and any member added later defaults to zero. Assigning
+    // field-by-field leaves a newly added member reading stack garbage, which
+    // silently changes behaviour depending on the call site.
+    Parser parser = {
+        .lexer = &lexer,
+        .vm = vm,
+        .prevType = errorType(vm),
+        .currentCompiler = NULL,  // initCompiler reads this for `enclosing`
+        .currentClass = NULL,
+    };
     vm->parser = &parser;           // exposes the compiler chain to the GC
     Compiler compiler;
     initCompiler(&compiler, &parser, TYPE_SCRIPT);
@@ -1604,14 +1606,16 @@ ObjFunction *compileRepl(VM *vm, const char *source, int *baseSlots) {
 
     Lexer lexer;
     initLexer(&lexer, source);
-    Parser parser;
-    parser.lexer = &lexer;
-    parser.hadError = false;
-    parser.panicMode = false;
-    parser.vm = vm;
-    parser.prevType = errorType(vm);
-    parser.currentCompiler = replInitialized ? &replCompiler : NULL;
-    parser.currentClass = NULL;
+    // See compile(): designated init, so unlisted members (notably `scanning`,
+    // which suppresses diagnostics during the class pre-scan) start at zero
+    // rather than at whatever the previous line left on the stack.
+    Parser parser = {
+        .lexer = &lexer,
+        .vm = vm,
+        .prevType = errorType(vm),
+        .currentCompiler = replInitialized ? &replCompiler : NULL,
+        .currentClass = NULL,
+    };
     vm->parser = &parser;
 
     if (!replInitialized) {

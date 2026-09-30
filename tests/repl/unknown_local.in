@@ -1,0 +1,7 @@
+# A line that fails to compile must still be reported, and must not derail the
+# rest of the session. compileRepl() runs on a long-lived compiler, so a
+# diagnostic suppressed by a stale `scanning` flag used to vanish silently.
+bogus
+x = 5
+x = x + 1
+bogus()
